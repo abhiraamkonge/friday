@@ -1,0 +1,331 @@
+
+package com.jarvis.agent
+
+import android.Manifest
+import android.app.Activity
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.text.InputType
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
+
+/** Settings + permissions screen. */
+class MainActivity : Activity() {
+
+    private lateinit var status: TextView
+    private lateinit var geminiKey: EditText
+    private lateinit var model: EditText
+    private lateinit var speechLang: EditText
+    private lateinit var replyLang: EditText
+    private lateinit var wakeSensitivity: EditText
+    private lateinit var testCmd: EditText
+
+    private var pendingStart = false
+    private var pendingGoal: String? = null
+
+    private fun dp(v: Int) =
+        (v * resources.displayMetrics.density).toInt()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(24), dp(16), dp(24))
+        }
+
+        fun title(t: String) = TextView(this).apply {
+            text = t
+            textSize = 24f
+        }.also { root.addView(it) }
+
+        fun label(t: String) = TextView(this).apply {
+            text = t
+            textSize = 13f
+            setPadding(0, dp(14), 0, 0)
+        }.also { root.addView(it) }
+
+        fun field(
+            hint: String,
+            value: String,
+            secret: Boolean = false
+        ) = EditText(this).apply {
+            this.hint = hint
+            setText(value)
+            inputType =
+                if (secret)
+                    InputType.TYPE_CLASS_TEXT or
+                    InputType.TYPE_TEXT_VARIATION_PASSWORD
+                else
+                    InputType.TYPE_CLASS_TEXT
+        }.also { root.addView(it) }
+
+        fun button(text: String, onClick: () -> Unit) =
+            Button(this).apply {
+                this.text = text
+                isAllCaps = false
+                setOnClickListener { onClick() }
+            }.also { root.addView(it) }
+
+        title("Jarvis")
+
+        status = TextView(this).apply {
+            textSize = 14f
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        root.addView(status)
+
+        label("Gemini API key (aistudio.google.com/apikey)")
+        geminiKey = field(
+            "AIza…",
+            Prefs.get(this, Prefs.GEMINI_KEY),
+            true
+        )
+
+        label("Wake word engine")
+        val wakeInfo = TextView(this).apply {
+            text = "Powered by openWakeWord\nWake phrase: Hey Jarvis"
+            textSize = 14f
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        root.addView(wakeInfo)
+
+        label("Wake word sensitivity (0.1 = very sensitive, 0.5 = strict)")
+        wakeSensitivity = field(
+            "0.25",
+            Prefs.get(this, Prefs.WAKE_THRESHOLD, "0.25")
+        )
+
+        label("Gemini model")
+        model = field(
+            "gemini-3.5-flash-lite",
+            Prefs.get(this, Prefs.MODEL, "gemini-3.5-flash-lite")
+        )
+
+        label("Speech recognition language (en-IN, en-US, si-LK, ta-LK …)")
+        speechLang = field(
+            "en-IN",
+            Prefs.get(this, Prefs.LANG, "en-IN")
+        )
+
+        label("Reply language (English, Singlish, Sinhala …)")
+        replyLang = field(
+            "English",
+            Prefs.get(this, Prefs.REPLY_LANG, "English")
+        )
+
+        button("Save settings") {
+            save()
+            toast("Saved")
+        }
+
+        label("Setup steps")
+
+        button("1. Enable Accessibility service") {
+            startActivity(
+                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            )
+        }
+
+        button("2. Allow Display over other apps") {
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+            )
+        }
+
+        button("3. Start Jarvis (wake word)") {
+            start(null)
+        }
+
+        button("🎙️ Tap to Speak (Voice Command)") {
+            save()
+            val intent = Intent(this, WakeService::class.java).apply {
+                action = WakeService.ACTION_LISTEN
+            }
+            startForegroundService(intent)
+        }
+
+        button("Stop Jarvis") {
+            stopService(Intent(this, WakeService::class.java))
+            refresh()
+        }
+
+        button("Battery: allow background use") {
+            startActivity(
+                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            )
+        }
+
+        label("Test without the wake word")
+
+        testCmd = field(
+            "e.g. open YouTube and search lofi music",
+            ""
+        )
+
+        button("Run command") {
+            val goal = testCmd.text.toString().trim()
+            if (goal.isNotEmpty()) start(goal)
+        }
+
+        setContentView(
+            ScrollView(this).apply {
+                addView(root)
+            }
+        )
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refresh()
+    }
+
+    private fun refresh() {
+        val a11y = JarvisAccessibilityService.instance != null
+        val overlay = Settings.canDrawOverlays(this)
+
+        val mic = checkSelfPermission(
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+        status.text =
+            "Accessibility: ${if (a11y) "✅ on" else "❌ off"}\n" +
+            "Overlay permission: ${if (overlay) "✅" else "❌"}\n" +
+            "Microphone: ${if (mic) "✅" else "❌"}\n" +
+            "Jarvis service: ${if (WakeService.running) "✅ running" else "⏹ stopped"}"
+    }
+
+    private fun save() {
+        Prefs.put(
+            this,
+            Prefs.GEMINI_KEY,
+            geminiKey.text.toString().trim()
+        )
+
+        Prefs.put(
+            this,
+            Prefs.MODEL,
+            model.text.toString().trim()
+                .ifEmpty { "gemini-3.5-flash-lite" }
+        )
+
+        Prefs.put(
+            this,
+            Prefs.LANG,
+            speechLang.text.toString().trim()
+                .ifEmpty { "en-IN" }
+        )
+
+        Prefs.put(
+            this,
+            Prefs.REPLY_LANG,
+            replyLang.text.toString().trim()
+                .ifEmpty { "English" }
+        )
+
+        Prefs.put(
+            this,
+            Prefs.WAKE_THRESHOLD,
+            wakeSensitivity.text.toString().trim()
+                .ifEmpty { "0.25" }
+        )
+    }
+
+    private fun start(goal: String?) {
+        save()
+
+        val need = mutableListOf<String>()
+
+        if (
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            need += Manifest.permission.RECORD_AUDIO
+        }
+
+        if (
+            Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            need += Manifest.permission.POST_NOTIFICATIONS
+        }
+
+        if (
+            checkSelfPermission(Manifest.permission.CALL_PHONE) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            need += Manifest.permission.CALL_PHONE
+        }
+
+        if (need.isNotEmpty()) {
+            pendingStart = true
+            pendingGoal = goal
+            requestPermissions(need.toTypedArray(), 1)
+            return
+        }
+
+        launchService(goal)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(
+            requestCode,
+            permissions,
+            grantResults
+        )
+
+        if (!pendingStart) return
+
+        pendingStart = false
+
+        if (
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            launchService(pendingGoal)
+        } else {
+            toast("Microphone permission is required")
+        }
+
+        pendingGoal = null
+    }
+
+    private fun launchService(goal: String?) {
+        val intent = Intent(this, WakeService::class.java)
+
+        if (goal != null) {
+            intent.action = WakeService.ACTION_RUN
+            intent.putExtra(WakeService.EXTRA_GOAL, goal)
+        }
+
+        startForegroundService(intent)
+
+        window.decorView.postDelayed({
+            refresh()
+        }, 600)
+    }
+
+    private fun toast(text: String) {
+        Toast.makeText(
+            this,
+            text,
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+}
