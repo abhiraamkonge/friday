@@ -64,6 +64,21 @@ class WakeService : Service() {
 
         @Volatile
         var running = false
+
+        enum class AgentState {
+            STANDBY, LISTENING, PROCESSING, SPEAKING
+        }
+
+        private val stateHandler = Handler(Looper.getMainLooper())
+
+        @Volatile
+        var currentState: AgentState = AgentState.STANDBY
+            internal set(value) {
+                field = value
+                stateHandler.post { stateListener?.invoke(value) }
+            }
+
+        var stateListener: ((AgentState) -> Unit)? = null
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -82,6 +97,7 @@ class WakeService : Service() {
     override fun onCreate() {
         super.onCreate()
         running = true
+        currentState = AgentState.STANDBY
 
         getSystemService(NotificationManager::class.java)
             .createNotificationChannel(
@@ -176,6 +192,7 @@ class WakeService : Service() {
 
     override fun onDestroy() {
         running = false
+        currentState = AgentState.STANDBY
         scope.cancel()
 
         try {
@@ -285,6 +302,7 @@ class WakeService : Service() {
                 var goal = typedGoal
 
                 if (goal == null) {
+                    currentState = AgentState.LISTENING
                     beep()
                     show("🎙 Listening for you, Sir…")
                     goal = listenOnce()
@@ -294,6 +312,7 @@ class WakeService : Service() {
                     show("Could not catch that, Sir")
                     delay(1200)
                 } else {
+                    currentState = AgentState.PROCESSING
                     show("🧠 $goal")
                     Agent(applicationContext, io).run(goal)
                 }
@@ -309,6 +328,7 @@ class WakeService : Service() {
                 withContext(NonCancellable) {
                     hideOverlay()
                     busy = false
+                    currentState = AgentState.STANDBY
                     resumeWake()
                 }
             }
@@ -521,6 +541,7 @@ class WakeService : Service() {
                             override fun onStart(utteranceId: String?) {}
 
                             override fun onDone(utteranceId: String?) {
+                                currentState = AgentState.PROCESSING
                                 try { audioManager.abandonAudioFocusRequest(focusRequest) } catch (_: Exception) {}
                                 if (cont.isActive) {
                                     cont.resume(Unit)
@@ -529,6 +550,7 @@ class WakeService : Service() {
 
                             @Deprecated("Deprecated in Java")
                             override fun onError(utteranceId: String?) {
+                                currentState = AgentState.PROCESSING
                                 try { audioManager.abandonAudioFocusRequest(focusRequest) } catch (_: Exception) {}
                                 if (cont.isActive) {
                                     cont.resume(Unit)
@@ -537,6 +559,7 @@ class WakeService : Service() {
                         }
                     )
 
+                    currentState = AgentState.SPEAKING
                     t.speak(
                         text,
                         TextToSpeech.QUEUE_FLUSH,
