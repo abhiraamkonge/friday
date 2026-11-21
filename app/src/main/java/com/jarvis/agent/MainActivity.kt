@@ -268,10 +268,10 @@ class MainActivity : Activity() {
             Prefs.get(this, Prefs.REPLY_LANG, "Indian English")
         ).also { configCard.addView(it) }
 
-        fieldLabel(configCard, "Wake Word Sensitivity (0.05 sensitive - 0.50 strict)")
+        fieldLabel(configCard, "Wake Word Sensitivity (0.02 sensitive - 0.20 strict, default 0.08)")
         wakeSensitivity = cyberField(
-            "0.20",
-            Prefs.get(this, Prefs.WAKE_THRESHOLD, "0.20")
+            "0.08",
+            Prefs.get(this, Prefs.WAKE_THRESHOLD, "0.08")
         ).also { configCard.addView(it) }
 
         val saveBtn = cyberButton("💾 SAVE CONFIGURATION", isPrimary = true) {
@@ -604,7 +604,7 @@ class MainActivity : Activity() {
         Prefs.put(
             this,
             Prefs.WAKE_THRESHOLD,
-            wakeSensitivity.text.toString().trim().ifEmpty { "0.20" }
+            wakeSensitivity.text.toString().trim().ifEmpty { "0.08" }
         )
     }
 

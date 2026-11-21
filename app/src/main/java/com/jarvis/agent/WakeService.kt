@@ -192,17 +192,11 @@ class WakeService : Service() {
 
     override fun onDestroy() {
         running = false
+        busy = false
         currentState = AgentState.STANDBY
         scope.cancel()
 
-        try {
-            wakeWord?.stop()
-            wakeWord?.release()
-        } catch (e: Exception) {
-            Log.e("WakeService", "Wake detector cleanup failed", e)
-        }
-
-        wakeWord = null
+        stopWakeDetector()
 
         tts?.shutdown()
         tts = null
@@ -213,6 +207,17 @@ class WakeService : Service() {
 
     // ---------- wake word ----------
 
+    private fun stopWakeDetector() {
+        try {
+            wakeWord?.stop()
+            wakeWord?.release()
+        } catch (e: Exception) {
+            Log.e("WakeService", "Wake detector cleanup failed", e)
+        } finally {
+            wakeWord = null
+        }
+    }
+
     private fun initWake() {
         if (
             checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
@@ -222,9 +227,13 @@ class WakeService : Service() {
             return
         }
 
+        stopWakeDetector()
+
         try {
-            val threshold = Prefs.get(this, Prefs.WAKE_THRESHOLD, "0.20")
-                .toFloatOrNull()?.coerceIn(0.05f, 0.90f) ?: 0.20f
+            // Adaptive sensitive threshold for natural Indian English pronunciation
+            val rawThreshold = Prefs.get(this, Prefs.WAKE_THRESHOLD, "0.08")
+                .toFloatOrNull() ?: 0.08f
+            val threshold = if (rawThreshold > 0.15f) 0.08f else rawThreshold.coerceIn(0.02f, 0.50f)
 
             wakeWord = OpenWakeWord.Builder(this)
                 .setModel(OpenWakeWord.BuiltInModel.HEY_JARVIS)
@@ -239,6 +248,7 @@ class WakeService : Service() {
                 }
             }
 
+            currentState = AgentState.STANDBY
             setNotif("Listening for \"Hey Jarvis\"")
 
         } catch (e: Exception) {
@@ -248,37 +258,8 @@ class WakeService : Service() {
     }
 
     private fun resumeWake() {
-        try {
-            if (
-                checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
-                PackageManager.PERMISSION_GRANTED
-            ) {
-                setNotif("Microphone permission is required")
-                return
-            }
-
-            val threshold = Prefs.get(this, Prefs.WAKE_THRESHOLD, "0.20")
-                .toFloatOrNull()?.coerceIn(0.05f, 0.90f) ?: 0.20f
-
-            wakeWord = OpenWakeWord.Builder(this)
-                .setModel(OpenWakeWord.BuiltInModel.HEY_JARVIS)
-                .setThreshold(threshold)
-                .build()
-
-            wakeWord?.start { score ->
-                Log.d("WakeService", "Wake word detected: $score (threshold: $threshold)")
-
-                mainHandler.post {
-                    if (!busy) startSession(null)
-                }
-            }
-
-            setNotif("Listening for \"Hey Jarvis\"")
-
-        } catch (e: Exception) {
-            Log.e("WakeService", "Could not resume wake detection", e)
-            setNotif("Wake detection error: ${e.message}")
-        }
+        if (!running) return
+        initWake()
     }
 
     // ---------- one full interaction ----------
@@ -290,14 +271,10 @@ class WakeService : Service() {
 
         job = scope.launch {
             try {
-                try {
-                    wakeWord?.stop()
-                } catch (e: Exception) {
-                    Log.e("WakeService", "Could not stop wake detector", e)
-                }
+                stopWakeDetector()
 
-                // Give the wake-word audio recorder a moment to release the microphone.
-                delay(200)
+                // Give Android audio hardware 300ms to cleanly release microphone for SpeechRecognizer
+                delay(300)
 
                 var goal = typedGoal
 
@@ -309,8 +286,8 @@ class WakeService : Service() {
                 }
 
                 if (goal.isNullOrBlank()) {
-                    show("Could not catch that, Sir")
-                    delay(1200)
+                    show("Standing by, Sir")
+                    delay(800)
                 } else {
                     currentState = AgentState.PROCESSING
                     show("🧠 $goal")
@@ -329,6 +306,7 @@ class WakeService : Service() {
                     hideOverlay()
                     busy = false
                     currentState = AgentState.STANDBY
+                    delay(200)
                     resumeWake()
                 }
             }
