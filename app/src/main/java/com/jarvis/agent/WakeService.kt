@@ -55,6 +55,7 @@ class WakeService : Service() {
     companion object {
         const val ACTION_RUN = "com.jarvis.agent.RUN"
         const val ACTION_CANCEL = "com.jarvis.agent.CANCEL"
+        const val ACTION_LISTEN = "com.jarvis.agent.LISTEN"
         const val EXTRA_GOAL = "goal"
         private const val CHANNEL = "jarvis"
         private const val NOTIF_ID = 1
@@ -129,6 +130,10 @@ class WakeService : Service() {
         when (intent?.action) {
             ACTION_CANCEL -> job?.cancel()
 
+            ACTION_LISTEN -> {
+                startSession(null)
+            }
+
             ACTION_RUN -> {
                 intent.getStringExtra(EXTRA_GOAL)?.let {
                     startSession(it)
@@ -177,13 +182,16 @@ class WakeService : Service() {
         }
 
         try {
+            val threshold = Prefs.get(this, Prefs.WAKE_THRESHOLD, "0.20")
+                .toFloatOrNull()?.coerceIn(0.05f, 0.90f) ?: 0.20f
+
             wakeWord = OpenWakeWord.Builder(this)
                 .setModel(OpenWakeWord.BuiltInModel.HEY_JARVIS)
-                .setThreshold(0.5f)
+                .setThreshold(threshold)
                 .build()
 
             wakeWord?.start { score ->
-                Log.d("WakeService", "Wake word detected: $score")
+                Log.d("WakeService", "Wake word detected: $score (threshold: $threshold)")
 
                 mainHandler.post {
                     if (!busy) startSession(null)
@@ -208,8 +216,16 @@ class WakeService : Service() {
                 return
             }
 
+            val threshold = Prefs.get(this, Prefs.WAKE_THRESHOLD, "0.20")
+                .toFloatOrNull()?.coerceIn(0.05f, 0.90f) ?: 0.20f
+
+            wakeWord = OpenWakeWord.Builder(this)
+                .setModel(OpenWakeWord.BuiltInModel.HEY_JARVIS)
+                .setThreshold(threshold)
+                .build()
+
             wakeWord?.start { score ->
-                Log.d("WakeService", "Wake word detected: $score")
+                Log.d("WakeService", "Wake word detected: $score (threshold: $threshold)")
 
                 mainHandler.post {
                     if (!busy) startSession(null)
@@ -311,7 +327,7 @@ class WakeService : Service() {
         val lang = Prefs.get(
             this@WakeService,
             Prefs.LANG,
-            "en-US"
+            "en-IN"
         )
 
         withTimeoutOrNull(15_000) {
@@ -596,12 +612,25 @@ class WakeService : Service() {
             PendingIntent.FLAG_IMMUTABLE
         )
 
+        val listen = PendingIntent.getService(
+            this,
+            2,
+            Intent(this, WakeService::class.java)
+                .setAction(ACTION_LISTEN),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+
         return Notification.Builder(this, CHANNEL)
             .setContentTitle("Jarvis")
             .setContentText(notifText)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentIntent(open)
             .setOngoing(true)
+            .addAction(
+                android.R.drawable.ic_btn_speak_now,
+                "🎙 Speak",
+                listen
+            )
             .addAction(
                 android.R.drawable.ic_menu_close_clear_cancel,
                 "Stop task",

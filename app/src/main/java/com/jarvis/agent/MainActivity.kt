@@ -25,6 +25,7 @@ class MainActivity : Activity() {
     private lateinit var model: EditText
     private lateinit var speechLang: EditText
     private lateinit var replyLang: EditText
+    private lateinit var wakeSensitivity: EditText
     private lateinit var testCmd: EditText
 
     private var pendingStart = false
@@ -76,6 +77,14 @@ class MainActivity : Activity() {
 
         title("Jarvis")
 
+        button("🎙️ Tap to Speak (Instant Voice Control)") {
+            save()
+            val intent = Intent(this, WakeService::class.java).apply {
+                action = WakeService.ACTION_LISTEN
+            }
+            startForegroundService(intent)
+        }
+
         status = TextView(this).apply {
             textSize = 14f
             setPadding(0, dp(8), 0, dp(8))
@@ -113,6 +122,12 @@ class MainActivity : Activity() {
         replyLang = field(
             "English",
             Prefs.get(this, Prefs.REPLY_LANG, "English")
+        )
+
+        label("Wake Word Sensitivity (0.05 sensitive - 0.50 strict, default 0.20)")
+        wakeSensitivity = field(
+            "0.20",
+            Prefs.get(this, Prefs.WAKE_THRESHOLD, "0.20")
         )
 
         button("Save settings") {
@@ -217,6 +232,13 @@ class MainActivity : Activity() {
             Prefs.REPLY_LANG,
             replyLang.text.toString().trim()
                 .ifEmpty { "English" }
+        )
+
+        Prefs.put(
+            this,
+            Prefs.WAKE_THRESHOLD,
+            wakeSensitivity.text.toString().trim()
+                .ifEmpty { "0.20" }
         )
     }
 
