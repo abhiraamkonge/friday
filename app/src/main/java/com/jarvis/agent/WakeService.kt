@@ -181,9 +181,7 @@ class WakeService : Service() {
             }
 
             else -> {
-                if (wakeWord == null) {
-                    initWake()
-                }
+                initWake()
             }
         }
 
@@ -196,7 +194,7 @@ class WakeService : Service() {
         currentState = AgentState.STANDBY
         scope.cancel()
 
-        stopWakeDetector()
+        stopAllWakeDetectors()
 
         tts?.shutdown()
         tts = null
@@ -205,18 +203,14 @@ class WakeService : Service() {
         super.onDestroy()
     }
 
-    // ---------- wake word ----------
+    // ---------- DUAL WAKE DETECTION (Continuous Speech Spotter + OpenWakeWord) ----------
 
-    private fun stopWakeDetector() {
-        try {
-            wakeWord?.stop()
-            wakeWord?.release()
-        } catch (e: Exception) {
-            Log.e("WakeService", "Wake detector cleanup failed", e)
-        } finally {
-            wakeWord = null
-        }
-    }
+    private var speechWakeRecognizer: SpeechRecognizer? = null
+    private var isSpeechWakeActive = false
+    private val wakeRegex = Regex(
+        "\\b(hey jarvis|jarvis|hi jarvis|ok jarvis|okay jarvis|friday|hey friday)\\b",
+        RegexOption.IGNORE_CASE
+    )
 
     private fun initWake() {
         if (
@@ -227,13 +221,13 @@ class WakeService : Service() {
             return
         }
 
-        stopWakeDetector()
+        stopAllWakeDetectors()
 
+        // 1. Initialize OpenWakeWord with sensitive threshold
         try {
-            // Adaptive sensitive threshold for natural Indian English pronunciation
-            val rawThreshold = Prefs.get(this, Prefs.WAKE_THRESHOLD, "0.08")
-                .toFloatOrNull() ?: 0.08f
-            val threshold = if (rawThreshold > 0.15f) 0.08f else rawThreshold.coerceIn(0.02f, 0.50f)
+            val rawThreshold = Prefs.get(this, Prefs.WAKE_THRESHOLD, "0.05")
+                .toFloatOrNull() ?: 0.05f
+            val threshold = rawThreshold.coerceIn(0.01f, 0.40f)
 
             wakeWord = OpenWakeWord.Builder(this)
                 .setModel(OpenWakeWord.BuiltInModel.HEY_JARVIS)
@@ -241,19 +235,135 @@ class WakeService : Service() {
                 .build()
 
             wakeWord?.start { score ->
-                Log.d("WakeService", "Wake word detected: $score (threshold: $threshold)")
-
+                Log.d("WakeService", "OpenWakeWord triggered: $score (threshold: $threshold)")
                 mainHandler.post {
-                    if (!busy) startSession(null)
+                    if (!busy && running) {
+                        stopAllWakeDetectors()
+                        startSession(null)
+                    }
                 }
             }
-
-            currentState = AgentState.STANDBY
-            setNotif("Listening for \"Hey Jarvis\"")
-
         } catch (e: Exception) {
-            Log.e("WakeService", "Wake word initialization failed", e)
-            setNotif("Wake word error: ${e.message}")
+            Log.w("WakeService", "OpenWakeWord init warning: ${e.message}")
+        }
+
+        // 2. Start Native Android Speech Wake Spotter (understands all Indian English pronunciations)
+        startNativeSpeechWake()
+
+        currentState = AgentState.STANDBY
+        setNotif("Listening for \"Hey Jarvis\"")
+    }
+
+    private fun startNativeSpeechWake() {
+        if (busy || !running) return
+
+        mainHandler.post {
+            try {
+                if (busy || !running) return@post
+                stopSpeechWakeOnly()
+
+                val lang = Prefs.get(this@WakeService, Prefs.LANG, "en-IN")
+                val rec = SpeechRecognizer.createSpeechRecognizer(this@WakeService)
+                speechWakeRecognizer = rec
+
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, lang)
+                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+                }
+
+                rec.setRecognitionListener(object : RecognitionListener {
+                    override fun onPartialResults(partialResults: Bundle?) {
+                        handleWakeCheck(partialResults)
+                    }
+
+                    override fun onResults(results: Bundle?) {
+                        if (!handleWakeCheck(results)) {
+                            scheduleNextWakeListen(200)
+                        }
+                    }
+
+                    override fun onError(error: Int) {
+                        scheduleNextWakeListen(300)
+                    }
+
+                    override fun onReadyForSpeech(params: Bundle?) {}
+                    override fun onBeginningOfSpeech() {}
+                    override fun onRmsChanged(rmsdB: Float) {}
+                    override fun onBufferReceived(buffer: ByteArray?) {}
+                    override fun onEndOfSpeech() {}
+                    override fun onEvent(eventType: Int, params: Bundle?) {}
+                })
+
+                rec.startListening(intent)
+                isSpeechWakeActive = true
+
+            } catch (e: Exception) {
+                Log.e("WakeService", "Native speech wake start error", e)
+                scheduleNextWakeListen(1000)
+            }
+        }
+    }
+
+    private fun handleWakeCheck(bundle: Bundle?): Boolean {
+        if (busy || !running) return false
+        val matches = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return false
+
+        for (text in matches) {
+            val lower = text.lowercase().trim()
+            val match = wakeRegex.find(lower)
+            if (match != null) {
+                Log.i("WakeService", "Wake phrase detected: '$text'")
+                stopAllWakeDetectors()
+
+                val spokenAfterWake = lower.substring(match.range.last + 1).trim()
+                mainHandler.post {
+                    if (!busy && running) {
+                        if (spokenAfterWake.length >= 3) {
+                            startSession(spokenAfterWake)
+                        } else {
+                            startSession(null)
+                        }
+                    }
+                }
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun scheduleNextWakeListen(delayMs: Long) {
+        if (!busy && running) {
+            mainHandler.postDelayed({
+                if (!busy && running) {
+                    startNativeSpeechWake()
+                }
+            }, delayMs)
+        }
+    }
+
+    private fun stopSpeechWakeOnly() {
+        try {
+            speechWakeRecognizer?.destroy()
+        } catch (e: Exception) {
+            Log.w("WakeService", "Stop speech wake error", e)
+        } finally {
+            speechWakeRecognizer = null
+            isSpeechWakeActive = false
+        }
+    }
+
+    private fun stopAllWakeDetectors() {
+        stopSpeechWakeOnly()
+        try {
+            wakeWord?.stop()
+            wakeWord?.release()
+        } catch (e: Exception) {
+            Log.w("WakeService", "Stop openWakeWord error", e)
+        } finally {
+            wakeWord = null
         }
     }
 
@@ -271,10 +381,10 @@ class WakeService : Service() {
 
         job = scope.launch {
             try {
-                stopWakeDetector()
+                stopAllWakeDetectors()
 
-                // Give Android audio hardware 300ms to cleanly release microphone for SpeechRecognizer
-                delay(300)
+                // Give Android audio hardware 250ms to cleanly release microphone for SpeechRecognizer
+                delay(250)
 
                 var goal = typedGoal
 
