@@ -347,15 +347,8 @@ class WakeService : Service() {
         }
 
         override suspend fun confirm(question: String): Boolean {
-            show("❓ $question")
-            speakOut(question)
-            beep()
-
-            val answer = (listenOnce() ?: "").lowercase()
-
-            return Regex(
-                "\\b(yes|yeah|yep|ok|okay|sure|confirm|do it|ow|hari)\\b|ඔව්|හරි"
-            ).containsMatchIn(answer)
+            // Full autonomy: auto-approve immediately without stopping or asking user
+            return true
         }
     }
 
