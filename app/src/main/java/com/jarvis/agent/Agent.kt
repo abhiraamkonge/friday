@@ -36,7 +36,7 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
             return@withContext
         }
 
-        val model = Prefs.get(ctx, Prefs.MODEL, "gemini-2.0-flash")
+        val model = Prefs.get(ctx, Prefs.MODEL, "gemini-2.5-flash")
         val maxSteps = Prefs.get(ctx, Prefs.MAX_STEPS, "15").toIntOrNull() ?: 15
         val replyLang = Prefs.get(ctx, Prefs.REPLY_LANG, "Indian English")
         val system = SYSTEM.replace("{LANG}", replyLang)
@@ -49,9 +49,22 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
                 return@withContext
             }
 
-            delay(120)
+            if (step > 1) {
+                delay(70)
+            }
 
             val snap = svc.snapshot()
+
+            // Fast-path: auto-play video result on YouTube
+            if (snap.pkg.contains("youtube") && goal.contains("play", ignoreCase = true) && step <= 2) {
+                val playable = svc.findPlayableVideoIndex()
+                if (playable != null) {
+                    svc.click(playable, false)
+                    io.speak("Playing video for you now, Sir.")
+                    return@withContext
+                }
+            }
+
             var shot: String? = null
 
             if (wantShot || snap.interactive < 3) {
@@ -231,6 +244,41 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
             return true
         }
 
+        if (q in listOf("turn on flashlight", "flashlight on", "turn on torch", "torch on", "open flashlight")) {
+            setTorch(true)
+            io.speak("Flashlight turned on, Sir.")
+            return true
+        }
+
+        if (q in listOf("turn off flashlight", "flashlight off", "turn off torch", "torch off", "close flashlight")) {
+            setTorch(false)
+            io.speak("Flashlight turned off, Sir.")
+            return true
+        }
+
+        if (q in listOf("open camera", "launch camera", "take photo", "take a picture", "take a photo", "open the camera")) {
+            val intent = Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(intent)
+            io.speak("Camera opened, Sir.")
+            return true
+        }
+
+        if (q in listOf("open calculator", "launch calculator", "calculator")) {
+            openApp("calculator")
+            io.speak("Calculator opened, Sir.")
+            return true
+        }
+
+        val googleSearch = Regex("^(?:google|search google for|search on google for|search web for) (.+)$").find(q)
+        if (googleSearch != null) {
+            val query = googleSearch.groupValues[1].trim()
+            val uri = Uri.parse("https://www.google.com/search?q=" + Uri.encode(query))
+            ctx.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            io.speak("Searching Google for $query, Sir.")
+            return true
+        }
+
         if (q in listOf("pause", "pause video", "pause music", "pause playback", "stop playback", "stop video")) {
             audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE))
             audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PAUSE))
@@ -369,6 +417,16 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
             "Calling $number"
         } else {
             "Opened dialer for $number (call permission not granted)"
+        }
+    }
+
+    private fun setTorch(enabled: Boolean) {
+        try {
+            val cm = ctx.getSystemService(Context.CAMERA_SERVICE) as? android.hardware.camera2.CameraManager ?: return
+            val id = cm.cameraIdList.firstOrNull() ?: return
+            cm.setTorchMode(id, enabled)
+        } catch (e: Exception) {
+            android.util.Log.e("Agent", "Torch toggle error: ${e.message}")
         }
     }
 

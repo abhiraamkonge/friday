@@ -252,9 +252,45 @@ class MainActivity : Activity() {
 
         fieldLabel(configCard, "Gemini Neural Model")
         model = cyberField(
-            "gemini-2.0-flash",
-            Prefs.get(this, Prefs.MODEL, "gemini-2.0-flash")
+            "gemini-2.5-flash",
+            Prefs.get(this, Prefs.MODEL, "gemini-2.5-flash")
         ).also { configCard.addView(it) }
+
+        val modelChips = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(4), 0, dp(8))
+        }
+
+        fun chip(label: String, targetModel: String) {
+            val btn = Button(this).apply {
+                text = label
+                textSize = 9.5f
+                isAllCaps = false
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(COLOR_CYAN)
+                setPadding(dp(6), dp(4), dp(6), dp(4))
+                background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#101C33"))
+                    setStroke(dp(1), COLOR_CARD_STROKE)
+                    cornerRadius = dp(8).toFloat()
+                }
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = dp(4)
+                }
+                setOnClickListener {
+                    model.setText(targetModel)
+                    save()
+                    toast("Model set to $targetModel")
+                }
+            }
+            modelChips.addView(btn)
+        }
+
+        chip("⚡ 2.5 Flash", "gemini-2.5-flash")
+        chip("🚀 3 Flash", "gemini-3-flash-live")
+        chip("🧠 3.8 Live", "gemini-3.8-live")
+        chip("⚡ 2.0 Flash", "gemini-2.0-flash")
+        configCard.addView(modelChips)
 
         fieldLabel(configCard, "Speech Recognition Language")
         speechLang = cyberField(
@@ -586,7 +622,7 @@ class MainActivity : Activity() {
         Prefs.put(
             this,
             Prefs.MODEL,
-            model.text.toString().trim().ifEmpty { "gemini-2.0-flash" }
+            model.text.toString().trim().ifEmpty { "gemini-2.5-flash" }
         )
 
         Prefs.put(

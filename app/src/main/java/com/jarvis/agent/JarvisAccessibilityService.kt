@@ -100,6 +100,19 @@ class JarvisAccessibilityService : AccessibilityService() {
         return Snapshot(text, interactive, root.packageName?.toString() ?: "")
     }
 
+    fun findPlayableVideoIndex(): Int? {
+        for (i in nodes.indices) {
+            val n = nodes[i]
+            val desc = n.contentDescription?.toString()?.lowercase() ?: ""
+            val text = n.text?.toString()?.lowercase() ?: ""
+            val isClickable = n.isClickable || n.isLongClickable
+            if (isClickable && (desc.contains("views") || desc.contains("ago") || desc.contains("minute") || desc.contains("second") || (text.length > 5 && !text.contains("search")))) {
+                return i
+            }
+        }
+        return null
+    }
+
     // ---------- actions ----------
     suspend fun click(index: Int, long: Boolean): String {
         val n = nodes.getOrNull(index) ?: return "No element with index $index (the screen may have changed)"

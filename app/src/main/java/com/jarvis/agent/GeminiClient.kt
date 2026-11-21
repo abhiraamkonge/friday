@@ -6,18 +6,34 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** Minimal Gemini REST client with function calling. Call from a background thread. */
+/** Minimal, ultra-fast Gemini REST client with function calling and intelligent fallback. */
 object GeminiClient {
     class Call(val name: String, val args: JSONObject)
 
+    private fun normalizeModel(raw: String): String {
+        val s = raw.trim().lowercase()
+        return when {
+            s.contains("2.5") && s.contains("flash") -> "gemini-2.5-flash"
+            s.contains("3") && s.contains("flash") -> "gemini-3-flash-live"
+            s.contains("3.8") && s.contains("thinking") -> "gemini-3.8-live-thinking"
+            s.contains("3.8") -> "gemini-3.8-live"
+            s.contains("3.5") && s.contains("translate") -> "gemini-3.5-live-translate"
+            s.contains("3.5") && s.contains("transcribe") -> "gemini-3.5-transcribe-live"
+            s.contains("2.0") && s.contains("flash") -> "gemini-2.0-flash"
+            s.contains("1.5") && s.contains("flash") -> "gemini-1.5-flash"
+            else -> raw.trim().replace(" ", "-")
+        }
+    }
+
     fun step(
         apiKey: String,
-        model: String,
+        rawModel: String,
         system: String,
         userText: String,
         screenshotB64: String?,
         tools: JSONArray
     ): Call {
+        val modelName = normalizeModel(rawModel)
         val parts = JSONArray().put(JSONObject().put("text", userText))
 
         if (screenshotB64 != null) {
@@ -55,60 +71,75 @@ object GeminiClient {
                     JSONObject().put("mode", "ANY")
                 )
             )
-
             .put(
                 "generationConfig",
                 JSONObject()
-                    .put("temperature", 0.1)
+                    .put("temperature", 0.0) // 0.0: greedy, ultra-fast, deterministic tool calling
                     .put("topP", 0.8)
-                    .put("maxOutputTokens", 512)
+                    .put("maxOutputTokens", 128) // Compact output for instantaneous TTFT
             )
 
         val payload = body.toString().toByteArray(Charsets.UTF_8)
 
-        for (attempt in 0 until 4) {
-            val conn = URL(
-                "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
-            ).openConnection() as HttpURLConnection
+        // Try user's chosen model first; fallback to 2.0-flash if model endpoint returns 404
+        val modelsToTry = if (modelName == "gemini-2.0-flash") {
+            listOf(modelName)
+        } else {
+            listOf(modelName, "gemini-2.0-flash")
+        }
 
-            try {
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.setRequestProperty("x-goog-api-key", apiKey)
-                conn.connectTimeout = 10_000
-                conn.readTimeout = 35_000
-                conn.doOutput = true
+        for (activeModel in modelsToTry) {
+            for (attempt in 0 until 3) {
+                val conn = URL(
+                    "https://generativelanguage.googleapis.com/v1beta/models/$activeModel:generateContent"
+                ).openConnection() as HttpURLConnection
 
-                conn.outputStream.use { it.write(payload) }
+                try {
+                    conn.requestMethod = "POST"
+                    conn.setRequestProperty("Content-Type", "application/json")
+                    conn.setRequestProperty("x-goog-api-key", apiKey)
+                    conn.setRequestProperty("Connection", "Keep-Alive")
+                    conn.connectTimeout = 6_000
+                    conn.readTimeout = 20_000
+                    conn.doOutput = true
 
-                val code = conn.responseCode
-                val stream = if (code in 200..299) {
-                    conn.inputStream
-                } else {
-                    conn.errorStream
-                }
+                    conn.outputStream.use { it.write(payload) }
 
-                val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
-
-                if (code in 200..299) {
-                    return parse(text)
-                }
-
-                if (code == 429 || code >= 500) {
-                    if (attempt < 3) {
-                        Thread.sleep(2000L shl attempt)
-                        continue
+                    val code = conn.responseCode
+                    val stream = if (code in 200..299) {
+                        conn.inputStream
+                    } else {
+                        conn.errorStream
                     }
+
+                    val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
+
+                    if (code in 200..299) {
+                        return parse(text)
+                    }
+
+                    // If model name is not available on this endpoint, fall back to gemini-2.0-flash
+                    if (code == 404 && activeModel != "gemini-2.0-flash") {
+                        android.util.Log.w("GeminiClient", "Model $activeModel 404, falling back to gemini-2.0-flash")
+                        break
+                    }
+
+                    if (code == 429 || code >= 500) {
+                        if (attempt < 2) {
+                            Thread.sleep(800L shl attempt)
+                            continue
+                        }
+                    }
+
+                    throw IOException("Gemini error $code ($activeModel): ${text.take(300)}")
+
+                } finally {
+                    conn.disconnect()
                 }
-
-                throw IOException("Gemini error $code: ${text.take(500)}")
-
-            } finally {
-                conn.disconnect()
             }
         }
 
-        throw IOException("Gemini is busy or rate-limited. Try again later.")
+        throw IOException("Gemini request timed out or busy. Please try again.")
     }
 
     private fun parse(text: String): Call {
