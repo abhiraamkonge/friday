@@ -37,7 +37,7 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
 
         val model = Prefs.get(ctx, Prefs.MODEL, "gemini-2.0-flash")
         val maxSteps = Prefs.get(ctx, Prefs.MAX_STEPS, "15").toIntOrNull() ?: 15
-        val replyLang = Prefs.get(ctx, Prefs.REPLY_LANG, "English")
+        val replyLang = Prefs.get(ctx, Prefs.REPLY_LANG, "Indian English")
         val system = SYSTEM.replace("{LANG}", replyLang)
         val history = ArrayList<String>()
 
@@ -194,14 +194,14 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
         if (q in listOf("what time is it", "tell me the time", "current time", "time")) {
             val time = java.text.SimpleDateFormat("h:mm a", Locale.getDefault())
                 .format(java.util.Date())
-            io.speak("The time is $time.")
+            io.speak("The time is $time, Sir.")
             return true
         }
 
         if (q in listOf("what is the date", "what's the date", "today's date", "current date", "date")) {
             val date = java.text.SimpleDateFormat("EEEE, d MMMM yyyy", Locale.getDefault())
                 .format(java.util.Date())
-            io.speak("Today is $date.")
+            io.speak("Today is $date, Sir.")
             return true
         }
 
@@ -213,7 +213,7 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
                 android.media.AudioManager.ADJUST_RAISE,
                 android.media.AudioManager.FLAG_SHOW_UI
             )
-            io.speak("Media volume increased.")
+            io.speak("Media volume increased, Sir.")
             return true
         }
 
@@ -223,7 +223,7 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
                 android.media.AudioManager.ADJUST_LOWER,
                 android.media.AudioManager.FLAG_SHOW_UI
             )
-            io.speak("Media volume decreased.")
+            io.speak("Media volume decreased, Sir.")
             return true
         }
 
@@ -232,35 +232,35 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
                 Intent(android.provider.Settings.ACTION_SETTINGS)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
-            io.speak("Opening Settings.")
+            io.speak("Opening Settings for you, Sir.")
             return true
         }
 
         if (q in listOf("pause", "pause video", "pause music", "pause playback", "stop playback", "stop video")) {
             audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PAUSE))
             audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_MEDIA_PAUSE))
-            io.speak("Paused.")
+            io.speak("Paused, Sir.")
             return true
         }
 
         if (q in listOf("play", "resume", "play video", "resume video", "continue", "resume playback", "start video")) {
             audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PLAY))
             audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_MEDIA_PLAY))
-            io.speak("Resumed.")
+            io.speak("Resumed, Sir.")
             return true
         }
 
         if (q in listOf("next video", "next song", "next track", "skip video", "skip song", "skip", "next")) {
             audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_NEXT))
             audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_MEDIA_NEXT))
-            io.speak("Playing next.")
+            io.speak("Playing next, Sir.")
             return true
         }
 
         if (q in listOf("previous video", "previous song", "previous track", "previous")) {
             audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS))
             audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS))
-            io.speak("Playing previous.")
+            io.speak("Playing previous, Sir.")
             return true
         }
 
@@ -282,7 +282,7 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
                 Intent(Intent.ACTION_VIEW, uri)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
-            io.speak("Playing $search on YouTube.")
+            io.speak("Playing $search on YouTube for you, Sir.")
             delay(1200)
             return false // Let Agent loop run step 1 to tap and play the first result!
         }
@@ -300,7 +300,7 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
                 Intent(Intent.ACTION_VIEW, uri)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
-            io.speak("Searching YouTube for $search.")
+            io.speak("Searching YouTube for $search, Sir.")
             return true
         }
 
@@ -379,9 +379,11 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
 
     companion object {
 
-        private const val SYSTEM = """You are Jarvis, an AI agent that operates an Android phone for its owner.
+        private const val SYSTEM = """You are Jarvis, a highly capable, natural, and polite AI assistant operating an Android phone for your owner.
+You speak with a natural, crisp, human-like Indian English voice, addressing the user respectfully as 'Sir' (e.g., 'Right away, Sir', 'Done, Sir', 'Playing that for you now, Sir').
 Each turn you receive the goal, the actions taken so far, and the CURRENT screen as a numbered list of UI elements (sometimes with a screenshot). Call exactly ONE tool per turn.
 Rules:
+- Be FAST, decisive, and natural.
 - Prefer click(index) using the element list. Use tap_xy only when the needed element is not in the list (then a screenshot is attached, or call request_screenshot).
 - type_text replaces the content of an input field. After typing a search, use press_key enter or click the search button.
 - To find something off-screen, use scroll. "down" reveals content further down.
@@ -391,7 +393,7 @@ Rules:
 - Never type passwords, PINs or OTPs. Ask the user to do it themselves via done.
 - When opening YouTube or searching videos, click the first video result to start playing it immediately.
 - If an action had no visible effect, try a different approach instead of repeating it.
-- When finished, call done with a short spoken-style result (1-2 sentences). Write that final message in: {LANG}."""
+- When finished, call done with a short, natural human spoken result (1-2 sentences) in natural Indian English, addressing the user respectfully as Sir: {LANG}."""
 
         private fun p(
             name: String,

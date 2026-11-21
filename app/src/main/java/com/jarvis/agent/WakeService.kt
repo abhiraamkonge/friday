@@ -24,6 +24,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
 import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
@@ -92,31 +93,41 @@ class WakeService : Service() {
 
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                val reply = Prefs.get(
-                    this,
-                    Prefs.REPLY_LANG,
-                    "English"
-                ).lowercase()
-
-                val loc = if (
-                    reply.contains("sinhala") &&
-                    !reply.contains("english")
-                ) {
-                    Locale("si", "LK")
-                } else {
-                    Locale.US
-                }
-
+                val indianLocale = Locale("en", "IN")
                 val t = tts
-                if (
-                    t != null &&
-                    t.isLanguageAvailable(loc) >= TextToSpeech.LANG_AVAILABLE
-                ) {
-                    t.language = loc
+
+                if (t != null && t.isLanguageAvailable(indianLocale) >= TextToSpeech.LANG_AVAILABLE) {
+                    t.language = indianLocale
+                } else {
+                    t?.language = Locale.US
                 }
 
-                t?.setSpeechRate(1.08f)
-                t?.setPitch(1.02f)
+                // Automatically search and select the highest-quality human Indian English voice
+                try {
+                    val voices = t?.voices
+                    if (!voices.isNullOrEmpty()) {
+                        val indianVoices = voices.filter { v ->
+                            val l = v.locale
+                            l != null && l.language.equals("en", ignoreCase = true) && l.country.equals("IN", ignoreCase = true)
+                        }
+
+                        val bestVoice = indianVoices.maxWithOrNull(
+                            compareByDescending<Voice> { it.quality }
+                                .thenBy { it.latency }
+                                .thenByDescending { !it.isNetworkConnectionRequired }
+                        ) ?: indianVoices.firstOrNull()
+
+                        if (bestVoice != null) {
+                            t?.voice = bestVoice
+                            Log.d("WakeService", "Selected Indian English human voice: ${bestVoice.name}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("WakeService", "Custom voice selection error: ${e.message}")
+                }
+
+                t?.setSpeechRate(1.0f) // Natural human cadence
+                t?.setPitch(1.0f)      // Natural human pitch
 
                 ttsReady = true
             }

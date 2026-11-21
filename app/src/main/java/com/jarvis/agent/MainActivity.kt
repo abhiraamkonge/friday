@@ -394,8 +394,8 @@ class MainActivity : Activity() {
         fieldLabel("Speech Recognition Language (en-IN, en-US, te-IN …)")
         speechLang = fieldInput("en-IN", Prefs.get(this, Prefs.LANG, "en-IN"))
 
-        fieldLabel("Reply Language (English, Sinhala …)")
-        replyLang = fieldInput("English", Prefs.get(this, Prefs.REPLY_LANG, "English"))
+        fieldLabel("Reply Language (Indian English, English …)")
+        replyLang = fieldInput("Indian English", Prefs.get(this, Prefs.REPLY_LANG, "Indian English"))
 
         fieldLabel("Continuous Conversation (true / false)")
         continuousMode = fieldInput("true", Prefs.get(this, Prefs.CONTINUOUS_MODE, "true"))
@@ -479,7 +479,7 @@ class MainActivity : Activity() {
         Prefs.put(this, Prefs.GEMINI_KEY, geminiKey.text.toString().trim())
         Prefs.put(this, Prefs.MODEL, model.text.toString().trim().ifEmpty { "gemini-2.0-flash" })
         Prefs.put(this, Prefs.LANG, speechLang.text.toString().trim().ifEmpty { "en-IN" })
-        Prefs.put(this, Prefs.REPLY_LANG, replyLang.text.toString().trim().ifEmpty { "English" })
+        Prefs.put(this, Prefs.REPLY_LANG, replyLang.text.toString().trim().ifEmpty { "Indian English" })
         Prefs.put(this, Prefs.WAKE_THRESHOLD, wakeSensitivity.text.toString().trim().ifEmpty { "0.25" })
         Prefs.put(this, Prefs.CONTINUOUS_MODE, continuousMode.text.toString().trim().ifEmpty { "true" })
     }
