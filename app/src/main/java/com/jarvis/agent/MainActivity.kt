@@ -252,8 +252,8 @@ class MainActivity : Activity() {
 
         fieldLabel(configCard, "Gemini Neural Model")
         model = cyberField(
-            "gemini-2.5-flash",
-            Prefs.get(this, Prefs.MODEL, "gemini-2.5-flash")
+            "gemini-3.8-live",
+            Prefs.get(this, Prefs.MODEL, "gemini-3.8-live")
         ).also { configCard.addView(it) }
 
         val modelChips = LinearLayout(this).apply {
@@ -286,10 +286,10 @@ class MainActivity : Activity() {
             modelChips.addView(btn)
         }
 
-        chip("⚡ 2.5 Flash", "gemini-2.5-flash")
-        chip("🚀 3 Flash", "gemini-3-flash-live")
+        chip("🔥 3.8 Live", "gemini-3.8-live")
+        chip("⚡ 3 Flash", "gemini-3-flash-live")
+        chip("✨ 2.5 Flash", "gemini-2.5-flash")
         chip("⚡ 2.0 Flash", "gemini-2.0-flash")
-        chip("🛡️ 1.5 Flash", "gemini-1.5-flash")
         configCard.addView(modelChips)
 
         val failoverNote = TextView(this).apply {
@@ -376,6 +376,14 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+
+        // Auto-upgrade legacy older models to the latest model
+        val curModel = Prefs.get(this, Prefs.MODEL, "gemini-3.8-live")
+        if (curModel == "gemini-2.0-flash" || curModel == "gemini-1.5-flash" || curModel.isEmpty()) {
+            Prefs.put(this, Prefs.MODEL, "gemini-3.8-live")
+            model.setText("gemini-3.8-live")
+        }
+
         refresh()
 
         // Register real-time agent state observer
@@ -630,7 +638,7 @@ class MainActivity : Activity() {
         Prefs.put(
             this,
             Prefs.MODEL,
-            model.text.toString().trim().ifEmpty { "gemini-2.5-flash" }
+            model.text.toString().trim().ifEmpty { "gemini-3.8-live" }
         )
 
         Prefs.put(

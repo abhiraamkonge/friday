@@ -36,7 +36,7 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
             return@withContext
         }
 
-        val model = Prefs.get(ctx, Prefs.MODEL, "gemini-2.5-flash")
+        val model = Prefs.get(ctx, Prefs.MODEL, "gemini-3.8-live")
         val maxSteps = Prefs.get(ctx, Prefs.MAX_STEPS, "15").toIntOrNull() ?: 15
         val replyLang = Prefs.get(ctx, Prefs.REPLY_LANG, "Indian English")
         val system = SYSTEM.replace("{LANG}", replyLang)
@@ -106,7 +106,13 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
 }
 
             if (call.name == "done") {
-                io.speak(call.args.optString("message", "Done."))
+                val msg = call.args.optString("message", "Done.")
+                if (msg.contains("latest model", ignoreCase = true) || msg.contains("newer model", ignoreCase = true)) {
+                    android.util.Log.w("Agent", "Model refusal detected: $msg")
+                    history.add("$step. Ignored model refusal: $msg")
+                    continue
+                }
+                io.speak(msg)
                 return@withContext
             }
 
@@ -435,6 +441,7 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
         private const val SYSTEM = """You are Jarvis, an autonomous, highly capable, polite, and respectful personal AI assistant operating an Android phone for your owner.
 
 AUTONOMOUS TASK COMPLETION DIRECTIVES:
+- You are powered by the latest Gemini model. NEVER claim to be outdated, never tell the user to 'use latest model', and never refuse a task.
 - Complete the user's task from start to finish 100% AUTONOMOUSLY. NEVER ask the user for approval, confirmation, or permission.
 - The user's spoken command is your absolute authorization to do everything required to achieve the goal.
 - NEVER ask "Should I...", "Do you want me to...", "May I...", or "Please confirm". Take action immediately.

@@ -17,10 +17,13 @@ object GeminiClient {
     private fun normalizeModel(raw: String): String {
         val s = raw.trim().lowercase()
         return when {
-            s.contains("2.5") && s.contains("flash") -> "gemini-2.5-flash"
-            s.contains("3") && s.contains("flash") -> "gemini-3-flash-live"
             s.contains("3.8") && s.contains("thinking") -> "gemini-3.8-live-thinking"
+            s.contains("3.8") && s.contains("live") -> "gemini-3.8-live"
             s.contains("3.8") -> "gemini-3.8-live"
+            s.contains("3") && s.contains("flash") -> "gemini-3-flash-live"
+            s.contains("3") -> "gemini-3-flash-live"
+            s.contains("2.5") && s.contains("flash") -> "gemini-2.5-flash"
+            s.contains("2.5") -> "gemini-2.5-flash"
             s.contains("3.5") && s.contains("translate") -> "gemini-3.5-live-translate"
             s.contains("3.5") && s.contains("transcribe") -> "gemini-3.5-transcribe-live"
             s.contains("2.0") && s.contains("flash") -> "gemini-2.0-flash"
@@ -40,12 +43,14 @@ object GeminiClient {
     ): Call {
         val preferredModel = normalizeModel(rawModel)
 
-        // Prioritized cascading fallback chain
+        // Prioritized cascading fallback chain starting with the latest models
         val fallbackCandidates = listOf(
             preferredModel,
-            "gemini-2.5-flash",
+            "gemini-3.8-live",
             "gemini-3-flash-live",
+            "gemini-3.8-flash",
             "gemini-3-flash",
+            "gemini-2.5-flash",
             "gemini-2.0-flash",
             "gemini-1.5-flash",
             "gemini-1.5-pro"
