@@ -236,6 +236,57 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
             return true
         }
 
+        if (q in listOf("pause", "pause video", "pause music", "pause playback", "stop playback", "stop video")) {
+            audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PAUSE))
+            audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_MEDIA_PAUSE))
+            io.speak("Paused.")
+            return true
+        }
+
+        if (q in listOf("play", "resume", "play video", "resume video", "continue", "resume playback", "start video")) {
+            audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PLAY))
+            audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_MEDIA_PLAY))
+            io.speak("Resumed.")
+            return true
+        }
+
+        if (q in listOf("next video", "next song", "next track", "skip video", "skip song", "skip", "next")) {
+            audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_NEXT))
+            audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_MEDIA_NEXT))
+            io.speak("Playing next.")
+            return true
+        }
+
+        if (q in listOf("previous video", "previous song", "previous track", "previous")) {
+            audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS))
+            audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS))
+            io.speak("Playing previous.")
+            return true
+        }
+
+        val youtubePlay = Regex(
+            "^(?:open youtube and )?(?:play|search and play)(?: on youtube)? (.+)$"
+        ).find(q) ?: Regex("^play (.+) on youtube$").find(q)
+            ?: Regex("^(?:change video to|change song to|play another video|play another song) (.+)$").find(q)
+
+        if (youtubePlay != null) {
+            val search = youtubePlay.groupValues[1]
+                .removePrefix("the ")
+                .removeSuffix(" on youtube")
+                .trim()
+
+            val uri = Uri.parse(
+                "https://www.youtube.com/results?search_query=" + Uri.encode(search)
+            )
+            ctx.startActivity(
+                Intent(Intent.ACTION_VIEW, uri)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            io.speak("Playing $search on YouTube.")
+            delay(1200)
+            return false // Let Agent loop run step 1 to tap and play the first result!
+        }
+
         val youtubeSearch = Regex(
             "^(?:open youtube and )?search(?: youtube)? for (.+)$"
         ).find(q) ?: Regex("^search youtube for (.+)$").find(q)
@@ -338,6 +389,7 @@ Rules:
 - Execute normal phone actions immediately without asking for confirmation, including opening apps, searching, clicking, typing, scrolling, and changing settings.
 - Call confirm ONLY before sending messages, making payments, deleting data, posting publicly, or placing phone calls. Never ask for confirmation for routine actions.
 - Never type passwords, PINs or OTPs. Ask the user to do it themselves via done.
+- When opening YouTube or searching videos, click the first video result to start playing it immediately.
 - If an action had no visible effect, try a different approach instead of repeating it.
 - When finished, call done with a short spoken-style result (1-2 sentences). Write that final message in: {LANG}."""
 

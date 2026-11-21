@@ -252,18 +252,38 @@ class WakeService : Service() {
 
                 var goal = typedGoal
 
-                if (goal == null) {
-                    beep()
-                    show("🎙 Listening…")
-                    goal = listenOnce()
-                }
+                while (kotlinx.coroutines.isActive) {
+                    if (goal == null) {
+                        beep()
+                        show("🎙 Listening…")
+                        goal = listenOnce()
+                    }
 
-                if (goal.isNullOrBlank()) {
-                    show("Didn't catch that")
-                    delay(1200)
-                } else {
+                    if (goal.isNullOrBlank()) {
+                        show("Didn't catch that")
+                        delay(1200)
+                        break
+                    }
+
                     show("🧠 $goal")
                     Agent(applicationContext, io).run(goal)
+
+                    val continuous = Prefs.get(
+                        this@WakeService,
+                        Prefs.CONTINUOUS_MODE,
+                        "true"
+                    ) == "true"
+
+                    if (!continuous) break
+
+                    // Wait a second after action finishes, then keep listening for next instruction
+                    delay(1200)
+                    show("🎙 Listening for next command…")
+                    goal = listenOnce()
+
+                    if (goal.isNullOrBlank()) {
+                        break
+                    }
                 }
 
             } catch (e: CancellationException) {
@@ -322,7 +342,35 @@ class WakeService : Service() {
             "en-US"
         )
 
-        withTimeoutOrNull(15_000) {
+        val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+        val focusRequest = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            android.media.AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                .build()
+        } else {
+            null
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && focusRequest != null) {
+            audioManager.requestAudioFocus(focusRequest)
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+        }
+
+        fun abandonFocus() {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && focusRequest != null) {
+                    audioManager.abandonAudioFocusRequest(focusRequest)
+                } else {
+                    @Suppress("DEPRECATION")
+                    audioManager.abandonAudioFocus(null)
+                }
+            } catch (e: Exception) {
+                Log.w("WakeService", "Abandon audio focus failed", e)
+            }
+        }
+
+        withTimeoutOrNull(25_000) {
             suspendCancellableCoroutine<String?> { cont ->
 
                 val rec = SpeechRecognizer.createSpeechRecognizer(
@@ -333,6 +381,7 @@ class WakeService : Service() {
 
                 fun finish(text: String?) {
                     if (finished.compareAndSet(false, true)) {
+                        abandonFocus()
                         rec.destroy()
 
                         if (cont.isActive) {
@@ -386,6 +435,7 @@ class WakeService : Service() {
 
                 cont.invokeOnCancellation {
                     mainHandler.post {
+                        abandonFocus()
                         rec.destroy()
                     }
                 }
@@ -413,14 +463,18 @@ class WakeService : Service() {
                         RecognizerIntent.EXTRA_MAX_RESULTS,
                         3
                     )
-                    // End promptly after a natural pause instead of waiting too long.
+                    // Generous silence threshold so user can pause comfortably without speech cutting off
                     .putExtra(
                         RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
-                        900L
+                        2500L
                     )
                     .putExtra(
                         RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
-                        500L
+                        1800L
+                    )
+                    .putExtra(
+                        RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS,
+                        1500L
                     )
 
                 try {

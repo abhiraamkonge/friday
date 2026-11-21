@@ -15,6 +15,7 @@ object Prefs {
     const val REPLY_LANG = "reply_lang"
     const val MAX_STEPS = "max_steps"
     const val WAKE_THRESHOLD = "wake_threshold"
+    const val CONTINUOUS_MODE = "continuous_mode"
 
     @Volatile
     private var cached: SharedPreferences? = null

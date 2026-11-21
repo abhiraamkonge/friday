@@ -25,6 +25,7 @@ class MainActivity : Activity() {
     private lateinit var model: EditText
     private lateinit var speechLang: EditText
     private lateinit var replyLang: EditText
+    private lateinit var continuousMode: EditText
     private lateinit var wakeSensitivity: EditText
     private lateinit var testCmd: EditText
 
@@ -120,6 +121,12 @@ class MainActivity : Activity() {
         replyLang = field(
             "English",
             Prefs.get(this, Prefs.REPLY_LANG, "English")
+        )
+
+        label("Continuous conversation (true / false - keep listening for next command)")
+        continuousMode = field(
+            "true",
+            Prefs.get(this, Prefs.CONTINUOUS_MODE, "true")
         )
 
         button("Save settings") {
@@ -239,6 +246,13 @@ class MainActivity : Activity() {
             Prefs.WAKE_THRESHOLD,
             wakeSensitivity.text.toString().trim()
                 .ifEmpty { "0.25" }
+        )
+
+        Prefs.put(
+            this,
+            Prefs.CONTINUOUS_MODE,
+            continuousMode.text.toString().trim()
+                .ifEmpty { "true" }
         )
     }
 
