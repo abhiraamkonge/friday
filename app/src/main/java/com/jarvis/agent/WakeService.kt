@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
@@ -37,6 +38,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -252,7 +254,7 @@ class WakeService : Service() {
 
                 var goal = typedGoal
 
-                while (kotlinx.coroutines.isActive) {
+                while (isActive) {
                     if (goal == null) {
                         beep()
                         show("🎙 Listening…")
@@ -343,28 +345,13 @@ class WakeService : Service() {
         )
 
         val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
-        val focusRequest = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            android.media.AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-                .build()
-        } else {
-            null
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && focusRequest != null) {
-            audioManager.requestAudioFocus(focusRequest)
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-        }
+        val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            .build()
+        audioManager.requestAudioFocus(focusRequest)
 
         fun abandonFocus() {
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && focusRequest != null) {
-                    audioManager.abandonAudioFocusRequest(focusRequest)
-                } else {
-                    @Suppress("DEPRECATION")
-                    audioManager.abandonAudioFocus(null)
-                }
+                audioManager.abandonAudioFocusRequest(focusRequest)
             } catch (e: Exception) {
                 Log.w("WakeService", "Abandon audio focus failed", e)
             }
