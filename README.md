@@ -54,4 +54,3 @@ Built-in keyword is **"Jarvis"**. For the exact phrase "Hey Jarvis", train it in
 | `JarvisAccessibilityService.kt` | Read UI tree, click, type, scroll, gestures, screenshot |
 | `GeminiClient.kt` | REST + function calling |
 | `MainActivity.kt`, `Prefs.kt` | Settings UI, encrypted storage |
-"# friday" 

@@ -11,7 +11,6 @@ import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
-import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
@@ -25,7 +24,6 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
-import android.speech.tts.Voice
 import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
@@ -57,7 +55,6 @@ class WakeService : Service() {
     companion object {
         const val ACTION_RUN = "com.jarvis.agent.RUN"
         const val ACTION_CANCEL = "com.jarvis.agent.CANCEL"
-        const val ACTION_LISTEN = "com.jarvis.agent.LISTEN"
         const val EXTRA_GOAL = "goal"
         private const val CHANNEL = "jarvis"
         private const val NOTIF_ID = 1
@@ -94,37 +91,28 @@ class WakeService : Service() {
 
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                val indianLocale = Locale("en", "IN")
-                val t = tts
+                val reply = Prefs.get(
+                    this,
+                    Prefs.REPLY_LANG,
+                    "English"
+                ).lowercase()
 
-                if (t != null && t.isLanguageAvailable(indianLocale) >= TextToSpeech.LANG_AVAILABLE) {
-                    t.language = indianLocale
+                val loc = if (
+                    reply.contains("sinhala") &&
+                    !reply.contains("english")
+                ) {
+                    Locale("si", "LK")
                 } else {
-                    t?.language = Locale.US
+                    Locale.US
                 }
 
-                // Automatically search and select the highest-quality human Indian English voice
-                try {
-                    val voices = t?.voices
-                    if (!voices.isNullOrEmpty()) {
-                        val indianVoices = voices.filter { v ->
-                            val l = v.locale
-                            l != null && l.language.equals("en", ignoreCase = true) && l.country.equals("IN", ignoreCase = true)
-                        }
-
-                        val bestVoice = indianVoices.maxByOrNull { it.quality } ?: indianVoices.firstOrNull()
-
-                        if (bestVoice != null) {
-                            t?.voice = bestVoice
-                            Log.d("WakeService", "Selected Indian English human voice: ${bestVoice.name}")
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w("WakeService", "Custom voice selection error: ${e.message}")
+                val t = tts
+                if (
+                    t != null &&
+                    t.isLanguageAvailable(loc) >= TextToSpeech.LANG_AVAILABLE
+                ) {
+                    t.language = loc
                 }
-
-                t?.setSpeechRate(1.0f) // Natural human cadence
-                t?.setPitch(1.0f)      // Natural human pitch
 
                 ttsReady = true
             }
@@ -140,10 +128,6 @@ class WakeService : Service() {
 
         when (intent?.action) {
             ACTION_CANCEL -> job?.cancel()
-
-            ACTION_LISTEN -> {
-                startSession(null)
-            }
 
             ACTION_RUN -> {
                 intent.getStringExtra(EXTRA_GOAL)?.let {
@@ -193,12 +177,9 @@ class WakeService : Service() {
         }
 
         try {
-            val threshold = Prefs.get(this, Prefs.WAKE_THRESHOLD, "0.25")
-                .toFloatOrNull()?.coerceIn(0.05f, 0.9f) ?: 0.25f
-
             wakeWord = OpenWakeWord.Builder(this)
                 .setModel(OpenWakeWord.BuiltInModel.HEY_JARVIS)
-                .setThreshold(threshold)
+                .setThreshold(0.5f)
                 .build()
 
             wakeWord?.start { score ->
@@ -263,38 +244,18 @@ class WakeService : Service() {
 
                 var goal = typedGoal
 
-                while (kotlinx.coroutines.isActive) {
-                    if (goal == null) {
-                        beep()
-                        show("🎙 Listening…")
-                        goal = listenOnce()
-                    }
+                if (goal == null) {
+                    beep()
+                    show("🎙 Listening…")
+                    goal = listenOnce()
+                }
 
-                    if (goal.isNullOrBlank()) {
-                        show("Didn't catch that")
-                        delay(1200)
-                        break
-                    }
-
+                if (goal.isNullOrBlank()) {
+                    show("Didn't catch that")
+                    delay(1200)
+                } else {
                     show("🧠 $goal")
                     Agent(applicationContext, io).run(goal)
-
-                    val continuous = Prefs.get(
-                        this@WakeService,
-                        Prefs.CONTINUOUS_MODE,
-                        "true"
-                    ) == "true"
-
-                    if (!continuous) break
-
-                    // Wait a second after action finishes, then keep listening for next instruction
-                    delay(1200)
-                    show("🎙 Listening for next command…")
-                    goal = listenOnce()
-
-                    if (goal.isNullOrBlank()) {
-                        break
-                    }
                 }
 
             } catch (e: CancellationException) {
@@ -353,20 +314,7 @@ class WakeService : Service() {
             "en-US"
         )
 
-        val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
-        val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-            .build()
-        audioManager.requestAudioFocus(focusRequest)
-
-        fun abandonFocus() {
-            try {
-                audioManager.abandonAudioFocusRequest(focusRequest)
-            } catch (e: Exception) {
-                Log.w("WakeService", "Abandon audio focus failed", e)
-            }
-        }
-
-        withTimeoutOrNull(25_000) {
+        withTimeoutOrNull(15_000) {
             suspendCancellableCoroutine<String?> { cont ->
 
                 val rec = SpeechRecognizer.createSpeechRecognizer(
@@ -377,7 +325,6 @@ class WakeService : Service() {
 
                 fun finish(text: String?) {
                     if (finished.compareAndSet(false, true)) {
-                        abandonFocus()
                         rec.destroy()
 
                         if (cont.isActive) {
@@ -431,7 +378,6 @@ class WakeService : Service() {
 
                 cont.invokeOnCancellation {
                     mainHandler.post {
-                        abandonFocus()
                         rec.destroy()
                     }
                 }
@@ -459,18 +405,14 @@ class WakeService : Service() {
                         RecognizerIntent.EXTRA_MAX_RESULTS,
                         3
                     )
-                    // Generous silence threshold so user can pause comfortably without speech cutting off
+                    // End promptly after a natural pause instead of waiting too long.
                     .putExtra(
                         RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
-                        2500L
+                        900L
                     )
                     .putExtra(
                         RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
-                        1800L
-                    )
-                    .putExtra(
-                        RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS,
-                        1500L
+                        500L
                     )
 
                 try {
@@ -654,25 +596,12 @@ class WakeService : Service() {
             PendingIntent.FLAG_IMMUTABLE
         )
 
-        val listen = PendingIntent.getService(
-            this,
-            2,
-            Intent(this, WakeService::class.java)
-                .setAction(ACTION_LISTEN),
-            PendingIntent.FLAG_IMMUTABLE
-        )
-
         return Notification.Builder(this, CHANNEL)
             .setContentTitle("Jarvis")
             .setContentText(notifText)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentIntent(open)
             .setOngoing(true)
-            .addAction(
-                android.R.drawable.ic_btn_speak_now,
-                "🎙 Speak",
-                listen
-            )
             .addAction(
                 android.R.drawable.ic_menu_close_clear_cancel,
                 "Stop task",
