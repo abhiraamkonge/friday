@@ -111,11 +111,7 @@ class WakeService : Service() {
                             l != null && l.language.equals("en", ignoreCase = true) && l.country.equals("IN", ignoreCase = true)
                         }
 
-                        val bestVoice = indianVoices.maxWithOrNull(
-                            compareByDescending<Voice> { it.quality }
-                                .thenBy { it.latency }
-                                .thenByDescending { !it.isNetworkConnectionRequired }
-                        ) ?: indianVoices.firstOrNull()
+                        val bestVoice = indianVoices.maxByOrNull { it.quality } ?: indianVoices.firstOrNull()
 
                         if (bestVoice != null) {
                             t?.voice = bestVoice
