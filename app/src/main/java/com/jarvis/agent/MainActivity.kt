@@ -108,8 +108,8 @@ class MainActivity : Activity() {
 
         label("Gemini model")
         model = field(
-            "gemini-3.5-flash-lite",
-            Prefs.get(this, Prefs.MODEL, "gemini-3.5-flash-lite")
+            "gemini-2.0-flash",
+            Prefs.get(this, Prefs.MODEL, "gemini-2.0-flash")
         )
 
         label("Speech recognition language (en-IN, en-US, si-LK, ta-LK …)")
@@ -118,10 +118,10 @@ class MainActivity : Activity() {
             Prefs.get(this, Prefs.LANG, "en-IN")
         )
 
-        label("Reply language (English, Singlish, Sinhala …)")
+        label("Reply language (Indian English, English …)")
         replyLang = field(
-            "English",
-            Prefs.get(this, Prefs.REPLY_LANG, "English")
+            "Indian English",
+            Prefs.get(this, Prefs.REPLY_LANG, "Indian English")
         )
 
         label("Wake Word Sensitivity (0.05 sensitive - 0.50 strict, default 0.20)")
@@ -184,11 +184,23 @@ class MainActivity : Activity() {
                 addView(root)
             }
         )
+
+        // Automatically prompt for microphone and start service on first launch
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            start(null)
+        }
     }
 
     override fun onResume() {
         super.onResume()
         refresh()
+
+        // Auto-start wake service if permissions are already granted
+        val a11y = JarvisAccessibilityService.instance != null
+        val mic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        if (a11y && mic && !WakeService.running && !pendingStart) {
+            launchService(null)
+        }
     }
 
     private fun refresh() {
@@ -217,7 +229,7 @@ class MainActivity : Activity() {
             this,
             Prefs.MODEL,
             model.text.toString().trim()
-                .ifEmpty { "gemini-3.5-flash-lite" }
+                .ifEmpty { "gemini-2.0-flash" }
         )
 
         Prefs.put(
@@ -231,7 +243,7 @@ class MainActivity : Activity() {
             this,
             Prefs.REPLY_LANG,
             replyLang.text.toString().trim()
-                .ifEmpty { "English" }
+                .ifEmpty { "Indian English" }
         )
 
         Prefs.put(

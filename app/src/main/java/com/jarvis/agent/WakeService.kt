@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
@@ -92,28 +93,37 @@ class WakeService : Service() {
 
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                val reply = Prefs.get(
-                    this,
-                    Prefs.REPLY_LANG,
-                    "English"
-                ).lowercase()
-
-                val loc = if (
-                    reply.contains("sinhala") &&
-                    !reply.contains("english")
-                ) {
-                    Locale("si", "LK")
-                } else {
-                    Locale.US
-                }
-
+                val indianLocale = Locale("en", "IN")
                 val t = tts
-                if (
-                    t != null &&
-                    t.isLanguageAvailable(loc) >= TextToSpeech.LANG_AVAILABLE
-                ) {
-                    t.language = loc
+
+                if (t != null && t.isLanguageAvailable(indianLocale) >= TextToSpeech.LANG_AVAILABLE) {
+                    t.language = indianLocale
+                } else {
+                    t?.language = Locale.US
                 }
+
+                // Automatically search and select the highest-quality human Indian English voice
+                try {
+                    val voices = t?.voices
+                    if (!voices.isNullOrEmpty()) {
+                        val indianVoices = voices.filter { v ->
+                            val l = v.locale
+                            l != null && l.language.equals("en", ignoreCase = true) && l.country.equals("IN", ignoreCase = true)
+                        }
+
+                        val bestVoice = indianVoices.maxByOrNull { it.quality } ?: indianVoices.firstOrNull()
+
+                        if (bestVoice != null) {
+                            t?.voice = bestVoice
+                            Log.d("WakeService", "Selected Indian English human voice: ${bestVoice.name}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("WakeService", "Custom voice selection error: ${e.message}")
+                }
+
+                t?.setSpeechRate(1.0f) // Natural human cadence
+                t?.setPitch(1.0f)      // Natural human pitch
 
                 ttsReady = true
             }
@@ -330,7 +340,20 @@ class WakeService : Service() {
             "en-IN"
         )
 
-        withTimeoutOrNull(15_000) {
+        val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+        val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            .build()
+        audioManager.requestAudioFocus(focusRequest)
+
+        fun abandonFocus() {
+            try {
+                audioManager.abandonAudioFocusRequest(focusRequest)
+            } catch (e: Exception) {
+                Log.w("WakeService", "Abandon audio focus failed", e)
+            }
+        }
+
+        withTimeoutOrNull(25_000) {
             suspendCancellableCoroutine<String?> { cont ->
 
                 val rec = SpeechRecognizer.createSpeechRecognizer(
@@ -341,6 +364,7 @@ class WakeService : Service() {
 
                 fun finish(text: String?) {
                     if (finished.compareAndSet(false, true)) {
+                        abandonFocus()
                         rec.destroy()
 
                         if (cont.isActive) {
@@ -394,6 +418,7 @@ class WakeService : Service() {
 
                 cont.invokeOnCancellation {
                     mainHandler.post {
+                        abandonFocus()
                         rec.destroy()
                     }
                 }
@@ -421,14 +446,17 @@ class WakeService : Service() {
                         RecognizerIntent.EXTRA_MAX_RESULTS,
                         3
                     )
-                    // End promptly after a natural pause instead of waiting too long.
                     .putExtra(
                         RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
-                        900L
+                        2500L
                     )
                     .putExtra(
                         RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
-                        500L
+                        1800L
+                    )
+                    .putExtra(
+                        RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS,
+                        1500L
                     )
 
                 try {
@@ -463,6 +491,11 @@ class WakeService : Service() {
                 return@withContext
             }
 
+            val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+            val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                .build()
+            audioManager.requestAudioFocus(focusRequest)
+
             withTimeoutOrNull(30_000) {
                 suspendCancellableCoroutine<Unit> { cont ->
 
@@ -474,6 +507,7 @@ class WakeService : Service() {
                             override fun onStart(utteranceId: String?) {}
 
                             override fun onDone(utteranceId: String?) {
+                                try { audioManager.abandonAudioFocusRequest(focusRequest) } catch (_: Exception) {}
                                 if (cont.isActive) {
                                     cont.resume(Unit)
                                 }
@@ -481,6 +515,7 @@ class WakeService : Service() {
 
                             @Deprecated("Deprecated in Java")
                             override fun onError(utteranceId: String?) {
+                                try { audioManager.abandonAudioFocusRequest(focusRequest) } catch (_: Exception) {}
                                 if (cont.isActive) {
                                     cont.resume(Unit)
                                 }

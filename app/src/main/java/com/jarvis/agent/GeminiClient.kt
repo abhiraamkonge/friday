@@ -56,6 +56,14 @@ object GeminiClient {
                 )
             )
 
+            .put(
+                "generationConfig",
+                JSONObject()
+                    .put("temperature", 0.1)
+                    .put("topP", 0.8)
+                    .put("maxOutputTokens", 512)
+            )
+
         val payload = body.toString().toByteArray(Charsets.UTF_8)
 
         for (attempt in 0 until 4) {
@@ -67,8 +75,8 @@ object GeminiClient {
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
                 conn.setRequestProperty("x-goog-api-key", apiKey)
-                conn.connectTimeout = 20_000
-                conn.readTimeout = 90_000
+                conn.connectTimeout = 10_000
+                conn.readTimeout = 35_000
                 conn.doOutput = true
 
                 conn.outputStream.use { it.write(payload) }
