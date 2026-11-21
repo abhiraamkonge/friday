@@ -288,9 +288,17 @@ class MainActivity : Activity() {
 
         chip("⚡ 2.5 Flash", "gemini-2.5-flash")
         chip("🚀 3 Flash", "gemini-3-flash-live")
-        chip("🧠 3.8 Live", "gemini-3.8-live")
         chip("⚡ 2.0 Flash", "gemini-2.0-flash")
+        chip("🛡️ 1.5 Flash", "gemini-1.5-flash")
         configCard.addView(modelChips)
+
+        val failoverNote = TextView(this).apply {
+            text = "🛡️ Auto-Failover: Automatically switches to backup models if primary model hits quota or errors."
+            textSize = 10f
+            setTextColor(COLOR_TEXT_MUTED)
+            setPadding(0, 0, 0, dp(6))
+        }
+        configCard.addView(failoverNote)
 
         fieldLabel(configCard, "Speech Recognition Language")
         speechLang = cyberField(
