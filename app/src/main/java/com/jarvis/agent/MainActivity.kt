@@ -167,6 +167,14 @@ class MainActivity : Activity() {
             )
         }
 
+        button("🗣️ Android Voice & TTS Settings") {
+            try {
+                startActivity(Intent("com.android.settings.TTS_SETTINGS"))
+            } catch (e: Exception) {
+                toast("Could not open TTS settings: ${e.message}")
+            }
+        }
+
         label("Test without the wake word")
 
         testCmd = field(

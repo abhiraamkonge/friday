@@ -91,43 +91,56 @@ class WakeService : Service() {
                 )
             )
 
-        tts = TextToSpeech(this) { status ->
+        val ttsListener = TextToSpeech.OnInitListener { status ->
             if (status == TextToSpeech.SUCCESS) {
-                val indianLocale = Locale("en", "IN")
-                val t = tts
-
-                if (t != null && t.isLanguageAvailable(indianLocale) >= TextToSpeech.LANG_AVAILABLE) {
-                    t.language = indianLocale
-                } else {
-                    t?.language = Locale.US
-                }
-
-                // Automatically search and select the highest-quality human Indian English voice
-                try {
-                    val voices = t?.voices
-                    if (!voices.isNullOrEmpty()) {
-                        val indianVoices = voices.filter { v ->
-                            val l = v.locale
-                            l != null && l.language.equals("en", ignoreCase = true) && l.country.equals("IN", ignoreCase = true)
-                        }
-
-                        val bestVoice = indianVoices.maxByOrNull { it.quality } ?: indianVoices.firstOrNull()
-
-                        if (bestVoice != null) {
-                            t?.voice = bestVoice
-                            Log.d("WakeService", "Selected Indian English human voice: ${bestVoice.name}")
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w("WakeService", "Custom voice selection error: ${e.message}")
-                }
-
-                t?.setSpeechRate(1.0f) // Natural human cadence
-                t?.setPitch(1.0f)      // Natural human pitch
-
-                ttsReady = true
+                configureTts()
             }
         }
+
+        try {
+            // Target Google Speech Services engine for authentic human neural voices
+            tts = TextToSpeech(this, ttsListener, "com.google.android.tts")
+        } catch (e: Exception) {
+            tts = TextToSpeech(this, ttsListener)
+        }
+    }
+
+    private fun configureTts() {
+        val t = tts ?: return
+        val indianLocale = Locale("en", "IN")
+
+        if (t.isLanguageAvailable(indianLocale) >= TextToSpeech.LANG_AVAILABLE) {
+            t.language = indianLocale
+        } else {
+            t.language = Locale.US
+        }
+
+        // Search and select highest-quality human Indian English voice (preferring Google neural network models)
+        try {
+            val voices = t.voices
+            if (!voices.isNullOrEmpty()) {
+                val indianVoices = voices.filter { v ->
+                    val l = v.locale
+                    l != null && l.language.equals("en", ignoreCase = true) && l.country.equals("IN", ignoreCase = true)
+                }
+
+                val bestVoice = indianVoices.maxWithOrNull(
+                    compareBy<Voice> { if (it.name.contains("network", ignoreCase = true)) 1 else 0 }
+                        .thenBy { it.quality }
+                ) ?: indianVoices.firstOrNull()
+
+                if (bestVoice != null) {
+                    t.voice = bestVoice
+                    Log.d("WakeService", "Selected real human Indian English voice: ${bestVoice.name} (quality=${bestVoice.quality})")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("WakeService", "Custom voice selection error: ${e.message}")
+        }
+
+        t.setSpeechRate(0.98f) // Natural human conversational rate
+        t.setPitch(1.0f)       // Natural human pitch
+        ttsReady = true
     }
 
     override fun onStartCommand(
@@ -272,12 +285,12 @@ class WakeService : Service() {
 
                 if (goal == null) {
                     beep()
-                    show("🎙 Listening…")
+                    show("🎙 Listening for you, Sir…")
                     goal = listenOnce()
                 }
 
                 if (goal.isNullOrBlank()) {
-                    show("Didn't catch that")
+                    show("Could not catch that, Sir")
                     delay(1200)
                 } else {
                     show("🧠 $goal")
