@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.view.KeyEvent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -36,7 +35,7 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
             return@withContext
         }
 
-        val model = Prefs.get(ctx, Prefs.MODEL, "gemini-3.5-flash-lite")
+        val model = Prefs.get(ctx, Prefs.MODEL, "gemini-2.0-flash")
         val maxSteps = Prefs.get(ctx, Prefs.MAX_STEPS, "15").toIntOrNull() ?: 15
         val replyLang = Prefs.get(ctx, Prefs.REPLY_LANG, "English")
         val system = SYSTEM.replace("{LANG}", replyLang)
@@ -49,7 +48,7 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
                 return@withContext
             }
 
-            delay(250)
+            delay(120)
 
             val snap = svc.snapshot()
             var shot: String? = null
