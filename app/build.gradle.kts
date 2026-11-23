@@ -11,13 +11,31 @@ android {
         applicationId = "com.jarvis.agent"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 24
+        versionName = "2.4"
+    }
+
+    signingConfigs {
+        create("jarvisSigning") {
+            storeFile = file("keystore/jarvis.jks")
+            storePassword = "jarviskey"
+            keyAlias = "jarvis"
+            keyPassword = "jarviskey"
+            enableV1Signing = true
+            enableV2Signing = true
+        }
     }
 
     buildTypes {
-        release { isMinifyEnabled = false }
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("jarvisSigning")
+        }
+        getByName("release") {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("jarvisSigning")
+        }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
