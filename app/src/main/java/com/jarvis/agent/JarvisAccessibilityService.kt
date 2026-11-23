@@ -249,7 +249,7 @@ class JarvisAccessibilityService : AccessibilityService() {
             var clicked = false
             if (root != null) {
                 val nodes = root.findAccessibilityNodeInfosByText(digitStr)
-                val digitNode = nodes.firstOrNull { it.isClickable || it.className?.contains("Button", ignoreCase = true) == true }
+                val digitNode = nodes?.firstOrNull { it.isClickable || it.className?.contains("Button", ignoreCase = true) == true }
                 if (digitNode != null) {
                     digitNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                     clicked = true
@@ -263,11 +263,14 @@ class JarvisAccessibilityService : AccessibilityService() {
         }
 
         // Try clicking Enter/OK/Done if present
-        root?.let {
-            val enterNodes = it.findAccessibilityNodeInfosByText("Enter") +
-                             it.findAccessibilityNodeInfosByText("OK") +
-                             it.findAccessibilityNodeInfosByText("Done")
-            enterNodes.firstOrNull { n -> n.isClickable }?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        root?.let { r ->
+            for (action in listOf("Enter", "OK", "Done")) {
+                val node = r.findAccessibilityNodeInfosByText(action)?.firstOrNull { n -> n.isClickable }
+                if (node != null) {
+                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    break
+                }
+            }
         }
     }
 

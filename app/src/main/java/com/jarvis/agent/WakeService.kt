@@ -89,7 +89,7 @@ class WakeService : Service() {
                     android.os.PowerManager.ON_AFTER_RELEASE,
                     "Jarvis:ScreenWakeUp"
                 )
-                wl.acquire(3000)
+                wl.acquire(3000L)
             } catch (e: Exception) {
                 Log.w("WakeService", "Wake screen failed: ${e.message}")
             }
