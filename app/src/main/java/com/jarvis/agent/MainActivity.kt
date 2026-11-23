@@ -37,6 +37,7 @@ class MainActivity : Activity() {
     private lateinit var overlayStatus: TextView
     private lateinit var micStatus: TextView
     private lateinit var serviceStatus: TextView
+    private lateinit var voiceStatusBadge: TextView
 
     private lateinit var geminiKey: EditText
     private lateinit var model: EditText
@@ -333,6 +334,100 @@ class MainActivity : Activity() {
 
         root.addView(configCard)
 
+        // ---------- 3.5. OWNER VOICE BIOMETRICS & RECOGNITION CARD ----------
+        val voiceCard = cyberCard("OWNER VOICE BIOMETRICS & RECOGNITION", "🛡️")
+
+        voiceStatusBadge = TextView(this).apply {
+            textSize = 10.5f
+            typeface = Typeface.MONOSPACE
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            val params = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(10)
+            }
+            layoutParams = params
+        }
+        voiceCard.addView(voiceStatusBadge)
+        updateVoiceBadge()
+
+        val trainBtn = cyberButton("🎙️ CALIBRATE / ENROLL OWNER VOICE", isPrimary = true) {
+            startVoiceEnrollment()
+        }
+        voiceCard.addView(trainBtn)
+
+        val voiceControls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(8), 0, 0)
+        }
+
+        val toggleLockBtn = cyberButton("🔒 Toggle Voice Lock", isPrimary = false) {
+            val isEnrolled = Prefs.get(this, Prefs.OWNER_VOICEPRINT).isNotBlank()
+            if (!isEnrolled) {
+                toast("Please calibrate your voiceprint first, Sir!")
+                return@cyberButton
+            }
+            val current = Prefs.get(this, Prefs.VOICE_LOCK_ENABLED, "false").toBoolean()
+            val newState = !current
+            Prefs.put(this, Prefs.VOICE_LOCK_ENABLED, newState.toString())
+            updateVoiceBadge()
+            toast(if (newState) "Voice Lock Enabled: Only Sir's voice accepted" else "Voice Lock Disabled")
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginEnd = dp(4)
+            }
+        }
+
+        val testMatchBtn = cyberButton("🧪 Test Voice Match", isPrimary = false) {
+            testVoiceMatch()
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = dp(4)
+            }
+        }
+        voiceControls.addView(toggleLockBtn)
+        voiceControls.addView(testMatchBtn)
+        voiceCard.addView(voiceControls)
+
+        fieldLabel(voiceCard, "Voice Recognition Sensitivity Threshold")
+        val sensitivityChips = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(4), 0, dp(4))
+        }
+
+        fun sensChip(label: String, thresh: String) {
+            val btn = Button(this).apply {
+                text = label
+                textSize = 9.5f
+                isAllCaps = false
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(COLOR_CYAN)
+                setPadding(dp(6), dp(4), dp(6), dp(4))
+                background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#101C33"))
+                    setStroke(dp(1), COLOR_CARD_STROKE)
+                    cornerRadius = dp(8).toFloat()
+                }
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = dp(4)
+                }
+                setOnClickListener {
+                    Prefs.put(this@MainActivity, Prefs.VOICE_THRESHOLD, thresh)
+                    toast("Sensitivity set to $label ($thresh)")
+                }
+            }
+            sensitivityChips.addView(btn)
+        }
+
+        sensChip("🛡️ Strict (0.80)", "0.80")
+        sensChip("⚡ Balanced (0.74)", "0.74")
+        sensChip("🌐 Relaxed (0.68)", "0.68")
+        voiceCard.addView(sensitivityChips)
+
+        root.addView(voiceCard)
+
         // ---------- 4. DIRECT COMMAND TERMINAL CARD ----------
         val cmdCard = cyberCard("DIRECT COMMAND TERMINAL", "🎯")
 
@@ -457,7 +552,105 @@ class MainActivity : Activity() {
         updateStatusText(micStatus, mic, "GRANTED", "TAP TO ALLOW")
         updateStatusText(serviceStatus, running, "ACTIVE", "STOPPED")
 
+        updateVoiceBadge()
         updateArcReactorState(WakeService.currentState)
+    }
+
+    private fun updateVoiceBadge() {
+        if (!::voiceStatusBadge.isInitialized) return
+        val isEnrolled = Prefs.get(this, Prefs.OWNER_VOICEPRINT).isNotBlank()
+        val isLocked = Prefs.get(this, Prefs.VOICE_LOCK_ENABLED, "false").toBoolean()
+        val textStr = when {
+            isEnrolled && isLocked -> "🔒 OWNER VOICE LOCK: ACTIVE (SIR ONLY)"
+            isEnrolled -> "🔓 VOICEPRINT CALIBRATED (LOCK DISABLED)"
+            else -> "⚠️ VOICEPRINT NOT ENROLLED (OPEN ACCESS)"
+        }
+        val color = when {
+            isEnrolled && isLocked -> COLOR_GREEN
+            isEnrolled -> COLOR_CYAN
+            else -> COLOR_AMBER
+        }
+        voiceStatusBadge.text = textStr
+        voiceStatusBadge.setTextColor(color)
+        voiceStatusBadge.background = GradientDrawable().apply {
+            setColor(Color.parseColor("#101C33"))
+            setStroke(dp(1), color)
+            cornerRadius = dp(14).toFloat()
+        }
+    }
+
+    private fun startVoiceEnrollment() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 101)
+            return
+        }
+
+        toast("Calibrating voiceprint... Please speak naturally for 4 seconds!")
+
+        val recorder = VoiceRecorder()
+        if (!recorder.start()) {
+            toast("Could not access microphone for calibration")
+            return
+        }
+
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        var remaining = 4
+
+        val progressTimer = object : Runnable {
+            override fun run() {
+                if (remaining > 0) {
+                    toast("🎙 Recording Sir's voice... ($remaining s)")
+                    remaining--
+                    handler.postDelayed(this, 1000)
+                } else {
+                    val pcmBytes = recorder.stop()
+                    val vp = VoiceprintEngine.extractVoiceprint(pcmBytes)
+                    if (vp != null) {
+                        val serialized = VoiceprintEngine.serialize(vp)
+                        Prefs.put(this@MainActivity, Prefs.OWNER_VOICEPRINT, serialized)
+                        Prefs.put(this@MainActivity, Prefs.VOICE_LOCK_ENABLED, "true")
+                        updateVoiceBadge()
+                        toast("Voiceprint successfully calibrated and locked to Sir! ✅")
+                    } else {
+                        toast("Audio was too short or quiet. Please speak clearly and try again.")
+                    }
+                }
+            }
+        }
+        handler.post(progressTimer)
+    }
+
+    private fun testVoiceMatch() {
+        val enrolledStr = Prefs.get(this, Prefs.OWNER_VOICEPRINT)
+        val enrolledVp = VoiceprintEngine.deserialize(enrolledStr)
+        if (enrolledVp == null) {
+            toast("Please calibrate your voiceprint first, Sir!")
+            return
+        }
+
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 101)
+            return
+        }
+
+        val recorder = VoiceRecorder()
+        if (!recorder.start()) {
+            toast("Could not access microphone")
+            return
+        }
+
+        toast("🎙 Speak for 3 seconds to test voice authentication...")
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            val pcmBytes = recorder.stop()
+            val threshold = Prefs.get(this, Prefs.VOICE_THRESHOLD, "0.74").toFloatOrNull() ?: 0.74f
+            val res = VoiceprintEngine.verify(enrolledVp, pcmBytes, threshold)
+            val scorePct = (res.score * 100).toInt()
+            if (res.matched) {
+                toast("✅ Voice Verified: Sir Confirmed! (Match: $scorePct%)")
+            } else {
+                toast("❌ Access Denied: Voice Mismatch! (Match: $scorePct%, Required: ${(threshold * 100).toInt()}%)")
+            }
+        }, 3000)
     }
 
     private fun updateStatusText(tv: TextView, active: Boolean, activeText: String, inactiveText: String) {

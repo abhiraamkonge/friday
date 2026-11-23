@@ -319,9 +319,10 @@ class WakeService : Service() {
                 stopAllWakeDetectors()
 
                 val spokenAfterWake = lower.substring(match.range.last + 1).trim()
+                val isVoiceLockEnabled = Prefs.get(this@WakeService, Prefs.VOICE_LOCK_ENABLED, "false").toBoolean()
                 mainHandler.post {
                     if (!busy && running) {
-                        if (spokenAfterWake.length >= 3) {
+                        if (!isVoiceLockEnabled && spokenAfterWake.length >= 3) {
                             startSession(spokenAfterWake)
                         } else {
                             startSession(null)
@@ -392,7 +393,14 @@ class WakeService : Service() {
                     currentState = AgentState.LISTENING
                     beep()
                     show("🎙 Listening for you, Sir…")
-                    goal = listenOnce()
+                    val cmd = listenOnce()
+                    if (!cmd.authenticated) {
+                        Log.w("WakeService", "Voice authentication rejected: ${cmd.details}")
+                        show("❌ Voice Mismatch")
+                        speakOut("Voice authentication failed. Speaker not recognized as Sir.")
+                        return@launch
+                    }
+                    goal = cmd.text
                 }
 
                 if (goal.isNullOrBlank()) {
@@ -440,13 +448,20 @@ class WakeService : Service() {
         }
     }
 
-    // ---------- speech in / out ----------
+    // ---------- speech in / out with Biometric Voice Verification ----------
 
-    private suspend fun listenOnce(): String? = withContext(Dispatchers.Main) {
+    data class VoiceCommandResult(
+        val text: String?,
+        val authenticated: Boolean,
+        val matchScore: Float,
+        val details: String
+    )
+
+    private suspend fun listenOnce(): VoiceCommandResult = withContext(Dispatchers.Main) {
 
         if (!SpeechRecognizer.isRecognitionAvailable(this@WakeService)) {
             speakOut("Speech recognition is not available on this phone.")
-            return@withContext null
+            return@withContext VoiceCommandResult(null, authenticated = true, 1.0f, "Service unavailable")
         }
 
         val lang = Prefs.get(
@@ -454,6 +469,16 @@ class WakeService : Service() {
             Prefs.LANG,
             "en-IN"
         )
+
+        val isLockEnabled = Prefs.get(this@WakeService, Prefs.VOICE_LOCK_ENABLED, "false").toBoolean()
+        val enrolledStr = Prefs.get(this@WakeService, Prefs.OWNER_VOICEPRINT, "")
+        val enrolledVp = VoiceprintEngine.deserialize(enrolledStr)
+        val threshold = Prefs.get(this@WakeService, Prefs.VOICE_THRESHOLD, "0.74").toFloatOrNull() ?: 0.74f
+
+        val recorder = VoiceRecorder()
+        // Record audio in parallel for biometric voiceprint analysis
+        recorder.start()
+        val backupAudioStream = java.io.ByteArrayOutputStream()
 
         val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
         val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
@@ -468,7 +493,7 @@ class WakeService : Service() {
             }
         }
 
-        withTimeoutOrNull(25_000) {
+        val speechText = withTimeoutOrNull(25_000) {
             suspendCancellableCoroutine<String?> { cont ->
 
                 val rec = SpeechRecognizer.createSpeechRecognizer(
@@ -513,7 +538,15 @@ class WakeService : Service() {
                         }
 
                         override fun onRmsChanged(rmsdB: Float) {}
-                        override fun onBufferReceived(buffer: ByteArray?) {}
+
+                        override fun onBufferReceived(buffer: ByteArray?) {
+                            if (buffer != null) {
+                                synchronized(backupAudioStream) {
+                                    backupAudioStream.write(buffer)
+                                }
+                            }
+                        }
+
                         override fun onEndOfSpeech() {
                             show("⏳ Processing speech…")
                         }
@@ -582,6 +615,33 @@ class WakeService : Service() {
                 }
             }
         }
+
+        // Stop parallel recorder and evaluate voiceprint
+        val recordedAudio = recorder.stop()
+        val audioBytes = if (recordedAudio.isNotEmpty()) recordedAudio else backupAudioStream.toByteArray()
+
+        if (speechText.isNullOrBlank()) {
+            return@withContext VoiceCommandResult(null, authenticated = true, 1.0f, "No speech detected")
+        }
+
+        // Verify speaker biometrics against owner voiceprint if Voice Lock is active
+        if (isLockEnabled && enrolledVp != null) {
+            val match = VoiceprintEngine.verify(enrolledVp, audioBytes, threshold)
+            Log.i("WakeService", "Biometric verification: ${match.details}")
+            return@withContext VoiceCommandResult(
+                text = speechText,
+                authenticated = match.matched,
+                matchScore = match.score,
+                details = match.details
+            )
+        }
+
+        return@withContext VoiceCommandResult(
+            text = speechText,
+            authenticated = true,
+            matchScore = 1.0f,
+            details = "Voice Lock Inactive"
+        )
     }
 
     private fun speechErrorName(error: Int): String = when (error) {

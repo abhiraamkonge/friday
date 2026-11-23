@@ -16,6 +16,9 @@ object Prefs {
     const val REPLY_LANG = "reply_lang"
     const val MAX_STEPS = "max_steps"
     const val WAKE_THRESHOLD = "wake_threshold"
+    const val VOICE_LOCK_ENABLED = "voice_lock_enabled"
+    const val OWNER_VOICEPRINT = "owner_voiceprint"
+    const val VOICE_THRESHOLD = "voice_threshold"
 
     @Volatile
     private var cached: SharedPreferences? = null
