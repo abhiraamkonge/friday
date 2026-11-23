@@ -14,6 +14,7 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.ByteArrayOutputStream
 import kotlin.coroutines.resume
@@ -220,6 +221,71 @@ class JarvisAccessibilityService : AccessibilityService() {
             }, null)
             if (!dispatched && cont.isActive) cont.resume(false)
         }
+
+    // ---------- Screen Unlock & Keyguard Dismissal ----------
+    suspend fun unlockDevice(pin: String? = null): Boolean {
+        val (w, h) = screenSize()
+        val cx = w / 2f
+
+        // 1. Perform swift swipe up from bottom to dismiss swipe keyguard / reveal PIN pad
+        val swiped = gesture(cx, h * 0.85f, cx, h * 0.15f, 250)
+        delay(450)
+
+        // 2. If a PIN is configured, enter the digits automatically on the PIN keypad
+        if (!pin.isNullOrBlank()) {
+            enterPin(pin)
+            delay(350)
+        }
+
+        // 3. Navigate to home screen
+        global(GLOBAL_ACTION_HOME)
+        return swiped
+    }
+
+    private suspend fun enterPin(pin: String) {
+        val root = rootInActiveWindow
+        for (ch in pin) {
+            val digitStr = ch.toString()
+            var clicked = false
+            if (root != null) {
+                val nodes = root.findAccessibilityNodeInfosByText(digitStr)
+                val digitNode = nodes.firstOrNull { it.isClickable || it.className?.contains("Button", ignoreCase = true) == true }
+                if (digitNode != null) {
+                    digitNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    clicked = true
+                }
+            }
+            if (!clicked) {
+                val (x, y) = getPinDigitCoordinate(ch)
+                tapNorm(x, y)
+            }
+            delay(150)
+        }
+
+        // Try clicking Enter/OK/Done if present
+        root?.let {
+            val enterNodes = it.findAccessibilityNodeInfosByText("Enter") +
+                             it.findAccessibilityNodeInfosByText("OK") +
+                             it.findAccessibilityNodeInfosByText("Done")
+            enterNodes.firstOrNull { n -> n.isClickable }?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        }
+    }
+
+    private fun getPinDigitCoordinate(digit: Char): Pair<Float, Float> {
+        return when (digit) {
+            '1' -> Pair(275f, 550f)
+            '2' -> Pair(500f, 550f)
+            '3' -> Pair(725f, 550f)
+            '4' -> Pair(275f, 650f)
+            '5' -> Pair(500f, 650f)
+            '6' -> Pair(725f, 650f)
+            '7' -> Pair(275f, 750f)
+            '8' -> Pair(500f, 750f)
+            '9' -> Pair(725f, 750f)
+            '0' -> Pair(500f, 850f)
+            else -> Pair(500f, 850f)
+        }
+    }
 
     // ---------- screenshot (Android 11+) ----------
     suspend fun screenshot(): String? = suspendCancellableCoroutine { cont ->

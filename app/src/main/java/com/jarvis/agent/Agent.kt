@@ -261,6 +261,9 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
                 val times = timesMatch?.groupValues?.get(1)
                 if (times != null) "Scrolling $times times for you, Sir." else "Scrolling for you, Sir."
             }
+            g.contains("unlock") || g.contains("screen lock") || g.contains("behnchod") || g.contains("bhenchod") -> {
+                "Unlocking your screen right away, Sir."
+            }
             g.startsWith("open ") || g.startsWith("launch ") || g.startsWith("start ") -> {
                 val app = goal.substringAfter(" ").substringBefore(" and ").substringBefore(" to ").trim()
                 "Right away, Sir. Opening $app."
@@ -284,6 +287,25 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
     .removeSuffix(".")
     .removeSuffix("!")
     .trim()
+
+        val isUnlock = q in listOf(
+            "unlock", "unlock phone", "unlock my phone", "unlock the phone",
+            "unlock screen", "open screen lock", "open my screen lock", "open screen",
+            "behnchod", "behenchod", "bhenchod", "behn chod", "bhen chod", "behen chod", "bencho", "bhencho", "benchod"
+        ) || q.startsWith("unlock ") || q.contains("screen lock")
+
+        if (isUnlock) {
+            WakeService.wakeScreen(ctx)
+            val svc = JarvisAccessibilityService.instance
+            if (svc != null) {
+                val pin = Prefs.get(ctx, Prefs.SCREEN_UNLOCK_PIN, "").takeIf { it.isNotBlank() }
+                svc.unlockDevice(pin)
+                io.speak("Screen unlocked for you, Sir.")
+            } else {
+                io.speak("Please enable Jarvis Accessibility Service to unlock your screen, Sir.")
+            }
+            return true
+        }
 
         if (q in listOf("what time is it", "tell me the time", "current time", "time")) {
             val time = java.text.SimpleDateFormat("h:mm a", Locale.getDefault())

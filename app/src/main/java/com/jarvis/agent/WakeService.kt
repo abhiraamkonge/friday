@@ -79,11 +79,27 @@ class WakeService : Service() {
             }
 
         var stateListener: ((AgentState) -> Unit)? = null
+
+        fun wakeScreen(ctx: Context) {
+            try {
+                val pm = ctx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+                val wl = pm.newWakeLock(
+                    android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                    android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                    android.os.PowerManager.ON_AFTER_RELEASE,
+                    "Jarvis:ScreenWakeUp"
+                )
+                wl.acquire(3000)
+            } catch (e: Exception) {
+                Log.w("WakeService", "Wake screen failed: ${e.message}")
+            }
+        }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    private var cpuWakeLock: android.os.PowerManager.WakeLock? = null
     private var wakeWord: OpenWakeWord? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
@@ -200,6 +216,12 @@ class WakeService : Service() {
         tts = null
 
         hideOverlay()
+
+        try {
+            if (cpuWakeLock?.isHeld == true) cpuWakeLock?.release()
+        } catch (_: Exception) {}
+        cpuWakeLock = null
+
         super.onDestroy()
     }
 
@@ -208,7 +230,12 @@ class WakeService : Service() {
     private var speechWakeRecognizer: SpeechRecognizer? = null
     private var isSpeechWakeActive = false
     private val wakeRegex = Regex(
-        "\\b(hey jarvis|jarvis|hi jarvis|ok jarvis|okay jarvis|friday|hey friday)\\b",
+        "\\b(hey jarvis|jarvis|hi jarvis|ok jarvis|okay jarvis|friday|hey friday|behnchod|behenchod|bhenchod|behn chod|bhen chod|behen chod|bencho|bhencho|benchod|bhenchoda|behnchoda)\\b",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val unlockTriggerRegex = Regex(
+        "\\b(behnchod|behenchod|bhenchod|behn chod|bhen chod|behen chod|bencho|bhencho|benchod|bhenchoda|behnchoda|unlock my phone|unlock the phone|unlock phone|unlock screen|open screen lock|open my screen lock|open screen)\\b",
         RegexOption.IGNORE_CASE
     )
 
@@ -358,12 +385,14 @@ class WakeService : Service() {
                 stopAllWakeDetectors()
 
                 val spokenAfterWake = lower.substring(match.range.last + 1).trim()
+                val isUnlockDirective = unlockTriggerRegex.containsMatchIn(lower)
                 val isVoiceLockEnabled = Prefs.get(this@WakeService, Prefs.VOICE_LOCK_ENABLED, "false").toBoolean()
 
                 mainHandler.post {
                     if (!busy && running) {
-                        // Only pass spokenAfterWake if it is from FINAL recognition and is a full sentence
-                        if (isFinal && !isVoiceLockEnabled && spokenAfterWake.length >= 8 && spokenAfterWake.contains(" ")) {
+                        if (isUnlockDirective) {
+                            startSession("open screen lock")
+                        } else if (isFinal && !isVoiceLockEnabled && spokenAfterWake.length >= 8 && spokenAfterWake.contains(" ")) {
                             startSession(spokenAfterWake)
                         } else {
                             // Listen completely to full command with active listening session & beep
@@ -923,6 +952,18 @@ class WakeService : Service() {
             )
         } else {
             startForeground(NOTIF_ID, n)
+        }
+
+        if (cpuWakeLock == null) {
+            try {
+                val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+                cpuWakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "Jarvis:WakeCpuLock").apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            } catch (e: Exception) {
+                Log.w("WakeService", "Acquire CPU wake lock error: ${e.message}")
+            }
         }
     }
 }

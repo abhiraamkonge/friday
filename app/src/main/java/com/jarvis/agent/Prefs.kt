@@ -19,6 +19,7 @@ object Prefs {
     const val VOICE_LOCK_ENABLED = "voice_lock_enabled"
     const val OWNER_VOICEPRINT = "owner_voiceprint"
     const val VOICE_THRESHOLD = "voice_threshold"
+    const val SCREEN_UNLOCK_PIN = "screen_unlock_pin"
 
     @Volatile
     private var cached: SharedPreferences? = null

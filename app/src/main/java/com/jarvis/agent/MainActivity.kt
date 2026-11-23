@@ -44,6 +44,7 @@ class MainActivity : Activity() {
     private lateinit var speechLang: EditText
     private lateinit var replyLang: EditText
     private lateinit var wakeSensitivity: EditText
+    private lateinit var screenUnlockPin: EditText
     private lateinit var testCmd: EditText
 
     private var pendingStart = false
@@ -317,6 +318,13 @@ class MainActivity : Activity() {
         wakeSensitivity = cyberField(
             "0.08",
             Prefs.get(this, Prefs.WAKE_THRESHOLD, "0.08")
+        ).also { configCard.addView(it) }
+
+        fieldLabel(configCard, "Screen Unlock PIN (Optional - for auto-entering lock screen PIN)")
+        screenUnlockPin = cyberField(
+            "e.g. 1234 (leave empty if swipe/smart unlock)",
+            Prefs.get(this, Prefs.SCREEN_UNLOCK_PIN, ""),
+            secret = true
         ).also { configCard.addView(it) }
 
         val saveBtn = cyberButton("💾 SAVE CONFIGURATION", isPrimary = true) {
@@ -850,6 +858,12 @@ class MainActivity : Activity() {
             this,
             Prefs.WAKE_THRESHOLD,
             wakeSensitivity.text.toString().trim().ifEmpty { "0.08" }
+        )
+
+        Prefs.put(
+            this,
+            Prefs.SCREEN_UNLOCK_PIN,
+            screenUnlockPin.text.toString().trim()
         )
     }
 
