@@ -7,30 +7,72 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Ultra-fast Gemini REST client with smart cascading multi-model failover.
- * If the primary model encounters rate limits, errors, or timeouts, it automatically
- * cascades across alternative high-performance models (2.5-flash -> 3-flash -> 2.0-flash -> 1.5-flash).
+ * Ultra-fast Gemini REST client with smart cascading multi-model failover and dynamic discovery.
+ * Ensures valid REST endpoints are used to prevent HTTP 404 errors.
  */
 object GeminiClient {
     class Call(val name: String, val args: JSONObject)
 
+    @Volatile private var cachedAvailableModels: List<String>? = null
+    @Volatile private var lastWorkingModel: String? = null
+
+    private val VERIFIED_REST_MODELS = listOf(
+        "gemini-2.0-flash",
+        "gemini-2.5-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro"
+    )
+
     private fun normalizeModel(raw: String): String {
-        val s = raw.trim().lowercase()
+        val s = raw.trim().lowercase().removePrefix("models/")
         return when {
-            s.contains("3.8") && s.contains("thinking") -> "gemini-3.8-live-thinking"
-            s.contains("3.8") && s.contains("live") -> "gemini-3.8-live"
-            s.contains("3.8") -> "gemini-3.8-live"
-            s.contains("3") && s.contains("flash") -> "gemini-3-flash-live"
-            s.contains("3") -> "gemini-3-flash-live"
-            s.contains("2.5") && s.contains("flash") -> "gemini-2.5-flash"
-            s.contains("2.5") -> "gemini-2.5-flash"
-            s.contains("3.5") && s.contains("translate") -> "gemini-3.5-live-translate"
-            s.contains("3.5") && s.contains("transcribe") -> "gemini-3.5-transcribe-live"
             s.contains("2.0") && s.contains("flash") -> "gemini-2.0-flash"
+            s.contains("2.5") && s.contains("flash") -> "gemini-2.5-flash"
             s.contains("1.5") && s.contains("flash") -> "gemini-1.5-flash"
             s.contains("1.5") && s.contains("pro") -> "gemini-1.5-pro"
-            else -> raw.trim().replace(" ", "-")
+            s.contains("3.8") || s.contains("3") || s.contains("live") -> "gemini-2.0-flash" // Route websocket/live models to fastest REST flash model
+            else -> raw.trim().removePrefix("models/").replace(" ", "-")
         }
+    }
+
+    private fun fetchAvailableModels(apiKey: String): List<String> {
+        cachedAvailableModels?.let { return it }
+        try {
+            val url = URL("https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("x-goog-api-key", apiKey)
+            conn.connectTimeout = 4000
+            conn.readTimeout = 5000
+            if (conn.responseCode in 200..299) {
+                val json = conn.inputStream.bufferedReader().use { it.readText() }
+                val root = JSONObject(json)
+                val arr = root.optJSONArray("models") ?: JSONArray()
+                val list = mutableListOf<String>()
+                for (i in 0 until arr.length()) {
+                    val m = arr.getJSONObject(i)
+                    val methods = m.optJSONArray("supportedGenerationMethods") ?: JSONArray()
+                    var canGenerate = false
+                    for (j in 0 until methods.length()) {
+                        if (methods.getString(j) == "generateContent") {
+                            canGenerate = true
+                            break
+                        }
+                    }
+                    if (canGenerate) {
+                        val name = m.optString("name").removePrefix("models/")
+                        if (name.isNotEmpty()) list.add(name)
+                    }
+                }
+                if (list.isNotEmpty()) {
+                    cachedAvailableModels = list
+                    return list
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("GeminiClient", "Dynamic model discovery failed: ${e.message}")
+        }
+        return VERIFIED_REST_MODELS
     }
 
     fun step(
@@ -41,20 +83,33 @@ object GeminiClient {
         screenshotB64: String?,
         tools: JSONArray
     ): Call {
-        val preferredModel = normalizeModel(rawModel)
+        val available = fetchAvailableModels(apiKey)
+        val normalizedPreferred = normalizeModel(rawModel)
 
-        // Prioritized cascading fallback chain starting with the latest models
-        val fallbackCandidates = listOf(
-            preferredModel,
-            "gemini-3.8-live",
-            "gemini-3-flash-live",
-            "gemini-3.8-flash",
-            "gemini-3-flash",
-            "gemini-2.5-flash",
-            "gemini-2.0-flash",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro"
-        ).distinct()
+        val candidateList = mutableListOf<String>()
+
+        // 1. If we already found a working model in this session, try it first for instant response
+        lastWorkingModel?.let { if (it in available || it in VERIFIED_REST_MODELS) candidateList.add(it) }
+
+        // 2. Preferred model (if it's a valid REST model)
+        if (normalizedPreferred in available || normalizedPreferred in VERIFIED_REST_MODELS) {
+            candidateList.add(normalizedPreferred)
+        }
+
+        // 3. High priority fast models in available list
+        for (m in available) {
+            if (m.contains("flash") && (m.contains("2.0") || m.contains("2.5"))) {
+                candidateList.add(m)
+            }
+        }
+
+        // 4. Fallback verified models
+        candidateList.addAll(VERIFIED_REST_MODELS)
+
+        // 5. Remaining available models
+        candidateList.addAll(available)
+
+        val finalCandidates = candidateList.distinct()
 
         val parts = JSONArray().put(JSONObject().put("text", userText))
 
@@ -104,19 +159,20 @@ object GeminiClient {
         val payload = body.toString().toByteArray(Charsets.UTF_8)
         var lastError: Exception? = null
 
-        // Cascade through fallback candidate models
-        for (activeModel in fallbackCandidates) {
+        // Cascade through candidate models until one succeeds
+        for (activeModel in finalCandidates) {
             try {
                 val call = executeRequest(apiKey, activeModel, payload)
                 if (call != null) {
-                    if (activeModel != preferredModel) {
-                        android.util.Log.i("GeminiClient", "Failover success: switched from $preferredModel to working model $activeModel")
+                    lastWorkingModel = activeModel
+                    if (activeModel != normalizedPreferred) {
+                        android.util.Log.i("GeminiClient", "Switched from $normalizedPreferred to active model $activeModel")
                     }
                     return call
                 }
             } catch (e: Exception) {
                 lastError = e
-                android.util.Log.w("GeminiClient", "Model $activeModel failed: ${e.message}. Cascading to next fallback model...")
+                android.util.Log.w("GeminiClient", "Model $activeModel failed: ${e.message}. Trying next...")
             }
         }
 
@@ -124,8 +180,9 @@ object GeminiClient {
     }
 
     private fun executeRequest(apiKey: String, model: String, payload: ByteArray): Call? {
+        val cleanModel = model.removePrefix("models/")
         val conn = URL(
-            "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
+            "https://generativelanguage.googleapis.com/v1beta/models/$cleanModel:generateContent?key=$apiKey"
         ).openConnection() as HttpURLConnection
 
         try {
@@ -134,7 +191,7 @@ object GeminiClient {
             conn.setRequestProperty("x-goog-api-key", apiKey)
             conn.setRequestProperty("Connection", "Keep-Alive")
             conn.connectTimeout = 6_000
-            conn.readTimeout = 18_000
+            conn.readTimeout = 20_000
             conn.doOutput = true
 
             conn.outputStream.use { it.write(payload) }
@@ -152,8 +209,7 @@ object GeminiClient {
                 return parse(text)
             }
 
-            // Return null or throw so the caller cascades to the next candidate model
-            throw IOException("HTTP $code ($model): ${text.take(250)}")
+            throw IOException("HTTP $code ($cleanModel): ${text.take(250)}")
 
         } finally {
             conn.disconnect()

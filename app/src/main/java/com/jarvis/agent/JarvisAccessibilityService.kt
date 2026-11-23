@@ -13,6 +13,7 @@ import android.view.Display
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.ByteArrayOutputStream
 import kotlin.coroutines.resume
@@ -60,7 +61,9 @@ class JarvisAccessibilityService : AccessibilityService() {
     // ---------- reading the screen ----------
     @Synchronized
     fun snapshot(): Snapshot {
-        val root = rootInActiveWindow ?: return Snapshot("(screen not readable)", 0, "")
+        val root = rootInActiveWindow
+            ?: windows.firstOrNull { it.isFocused || it.type == AccessibilityWindowInfo.TYPE_APPLICATION }?.root
+            ?: return Snapshot("(screen not readable)", 0, "")
         val (sw, sh) = screenSize()
         val list = ArrayList<AccessibilityNodeInfo>()
         val sb = StringBuilder()

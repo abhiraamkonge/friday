@@ -11,6 +11,7 @@ object Prefs {
 
     const val GEMINI_KEY = "gemini_key"
     const val MODEL = "model"
+    const val DEFAULT_MODEL = "gemini-2.0-flash"
     const val LANG = "speech_lang"
     const val REPLY_LANG = "reply_lang"
     const val MAX_STEPS = "max_steps"

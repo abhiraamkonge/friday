@@ -36,7 +36,7 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
             return@withContext
         }
 
-        val model = Prefs.get(ctx, Prefs.MODEL, "gemini-3.8-live")
+        val model = Prefs.get(ctx, Prefs.MODEL, Prefs.DEFAULT_MODEL)
         val maxSteps = Prefs.get(ctx, Prefs.MAX_STEPS, "15").toIntOrNull() ?: 15
         val replyLang = Prefs.get(ctx, Prefs.REPLY_LANG, "Indian English")
         val system = SYSTEM.replace("{LANG}", replyLang)
@@ -50,7 +50,7 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
             }
 
             if (step > 1) {
-                delay(70)
+                delay(150)
             }
 
             val snap = svc.snapshot()
@@ -97,13 +97,18 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
                 GeminiClient.step(
                     apiKey, model, system, prompt, shot, TOOLS
                 )
-     } catch (e: Exception) {
-    android.util.Log.e("JarvisGemini", "Gemini request failed", e)
-
-    val error = e.message ?: "Unknown error"
-    io.speak("Gemini error: $error")
-    return@withContext
-}
+            } catch (e: Exception) {
+                android.util.Log.e("JarvisGemini", "Gemini request failed", e)
+                val rawErr = e.message ?: "Unknown error"
+                val userMsg = when {
+                    rawErr.contains("404") -> "The requested AI model was not found. Please check your Gemini API key in settings, Sir."
+                    rawErr.contains("400") || rawErr.contains("API_KEY") -> "Your Gemini API key appears invalid, Sir. Please check it in settings."
+                    rawErr.contains("429") -> "API quota limit reached, Sir. Please try again in a few moments."
+                    else -> "I encountered an error communicating with the AI, Sir: $rawErr"
+                }
+                io.speak(userMsg)
+                return@withContext
+            }
 
             if (call.name == "done") {
                 val msg = call.args.optString("message", "Done.")
@@ -148,7 +153,11 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
         val a = c.args
 
         return when (c.name) {
-            "open_app" -> openApp(a.optString("app_name"))
+            "open_app" -> {
+                val res = openApp(a.optString("app_name"))
+                delay(800) // Allow launched app to open and fully populate its accessibility tree
+                res
+            }
             "click" -> svc.click(a.getInt("index"), false)
             "long_click" -> svc.click(a.getInt("index"), true)
 
@@ -463,6 +472,12 @@ Rules:
 - To find something off-screen, use scroll. "down" reveals content further down.
 - If the goal needs no phone interaction (a general question, factual query), call done immediately with the answer.
 - When opening YouTube or searching media, click the first video or search result to start playing it immediately without asking.
+- Multi-step messaging (e.g. WhatsApp, Messages):
+  1. If the app is not open, call open_app.
+  2. If the chat/contact is visible, click it. If not, click Search, type the contact's name, then click the contact from the results.
+  3. Click the message text input field or use type_text to input the text.
+  4. Click the Send button immediately to send the message.
+  5. Once sent, call done with a short polite confirmation to Sir.
 - If an action had no visible effect, try a different approach instead of repeating it.
 - When the task is completely finished, call done with a short, natural human spoken message (1-2 sentences) in natural Indian English, addressing the user respectfully as Sir: {LANG}."""
 
