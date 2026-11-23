@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
@@ -19,6 +20,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -82,11 +84,11 @@ class WakeService : Service() {
 
         fun wakeScreen(ctx: Context) {
             try {
-                val pm = ctx.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+                val pm = ctx.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
                 val wl = pm.newWakeLock(
-                    android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
-                    android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP or
-                    android.os.PowerManager.ON_AFTER_RELEASE,
+                    PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                    PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                    PowerManager.ON_AFTER_RELEASE,
                     "Jarvis:ScreenWakeUp"
                 )
                 wl.acquire(3000L)
@@ -99,7 +101,7 @@ class WakeService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private var cpuWakeLock: android.os.PowerManager.WakeLock? = null
+    private var cpuWakeLock: PowerManager.WakeLock? = null
     private var wakeWord: OpenWakeWord? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
@@ -956,8 +958,8 @@ class WakeService : Service() {
 
         if (cpuWakeLock == null) {
             try {
-                val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
-                cpuWakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "Jarvis:WakeCpuLock").apply {
+                val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+                cpuWakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Jarvis:WakeCpuLock")?.apply {
                     setReferenceCounted(false)
                     acquire()
                 }
