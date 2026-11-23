@@ -36,6 +36,10 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
             return@withContext
         }
 
+        // Acknowledge Sir's command immediately and confirm identification so the user knows Jarvis has identified it and is executing
+        val ack = generateAcknowledgment(goal)
+        io.speak(ack)
+
         val model = Prefs.get(ctx, Prefs.MODEL, Prefs.DEFAULT_MODEL)
         val maxSteps = Prefs.get(ctx, Prefs.MAX_STEPS, "15").toIntOrNull() ?: 15
         val replyLang = Prefs.get(ctx, Prefs.REPLY_LANG, "Indian English")
@@ -158,7 +162,16 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
                 delay(800) // Allow launched app to open and fully populate its accessibility tree
                 res
             }
-            "click" -> svc.click(a.getInt("index"), false)
+            "click" -> {
+                val idx = a.getInt("index")
+                val count = a.optInt("count", 1).coerceIn(1, 10)
+                var lastRes = "Clicked"
+                for (i in 1..count) {
+                    lastRes = svc.click(idx, false)
+                    if (i < count) delay(250)
+                }
+                lastRes
+            }
             "long_click" -> svc.click(a.getInt("index"), true)
 
             "type_text" -> svc.typeText(
@@ -166,8 +179,26 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
                 a.optString("text")
             )
 
-            "scroll" -> svc.scroll(a.optString("direction", "down"))
-            "press_key" -> svc.pressKey(a.optString("key"))
+            "scroll" -> {
+                val dir = a.optString("direction", "down")
+                val count = a.optInt("count", 1).coerceIn(1, 10)
+                var lastRes = "Scrolled"
+                for (i in 1..count) {
+                    lastRes = svc.scroll(dir)
+                    if (i < count) delay(300)
+                }
+                lastRes
+            }
+            "press_key" -> {
+                val key = a.optString("key")
+                val count = a.optInt("count", 1).coerceIn(1, 10)
+                var lastRes = "OK"
+                for (i in 1..count) {
+                    lastRes = svc.pressKey(key)
+                    if (i < count) delay(300)
+                }
+                lastRes
+            }
 
             "tap_xy" -> svc.tapNorm(
                 a.getDouble("x").toFloat(),
@@ -199,6 +230,46 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
             }
 
             else -> "Unknown tool ${c.name}"
+        }
+    }
+
+    /**
+     * Instantly acknowledges Sir's command out loud, confirming command identification.
+     */
+    private fun generateAcknowledgment(goal: String): String {
+        val g = goal.lowercase().trim()
+        return when {
+            g.contains("whatsapp") && (g.contains("text") || g.contains("send") || g.contains("message")) -> {
+                val nameMatch = Regex("\\b(?:to|text|message)\\s+([a-zA-Z]+)").find(goal)
+                val target = nameMatch?.groupValues?.get(1)?.replaceFirstChar { it.uppercase() }
+                if (!target.isNullOrBlank() && !target.equals("whatsapp", ignoreCase = true) && !target.equals("him", ignoreCase = true) && !target.equals("her", ignoreCase = true)) {
+                    "Right away, Sir. Texting $target on WhatsApp for you."
+                } else {
+                    "Right away, Sir. Opening WhatsApp to send your message."
+                }
+            }
+            g.contains("youtube") || (g.contains("play") && (g.contains("song") || g.contains("music") || g.contains("video"))) -> {
+                "Certainly, Sir. Opening YouTube and playing that for you now."
+            }
+            g.contains("call ") -> {
+                val nameMatch = Regex("\\bcall\\s+([a-zA-Z]+)").find(goal)
+                val target = nameMatch?.groupValues?.get(1)?.replaceFirstChar { it.uppercase() }
+                if (!target.isNullOrBlank()) "Placing a call to $target for you, Sir." else "Calling right away, Sir."
+            }
+            g.contains("scroll") -> {
+                val timesMatch = Regex("\\b(\\d+)\\s*times?\\b").find(g)
+                val times = timesMatch?.groupValues?.get(1)
+                if (times != null) "Scrolling $times times for you, Sir." else "Scrolling for you, Sir."
+            }
+            g.startsWith("open ") || g.startsWith("launch ") || g.startsWith("start ") -> {
+                val app = goal.substringAfter(" ").substringBefore(" and ").substringBefore(" to ").trim()
+                "Right away, Sir. Opening $app."
+            }
+            g.contains("turn on flashlight") || g.contains("torch on") -> "Turning on flashlight, Sir."
+            g.contains("turn off flashlight") || g.contains("torch off") -> "Turning off flashlight, Sir."
+            g.contains("search ") -> "Searching for that right away, Sir."
+            goal.length in 3..40 -> "Right away, Sir. Working on $goal."
+            else -> "Right away, Sir. Working on your directive."
         }
     }
 
@@ -489,6 +560,11 @@ Directives & Command Disambiguation:
   * For System Actions (Calls, Settings, Flashlight):
     Execute the required clicks or tools directly to complete the request without pausing.
 
+Repetition & Continuous Commands:
+- If Sir commands an action to be performed multiple times (e.g. "scroll down 5 times", "press back 2 times", "tap next 3 times", "repeat this 4 times"):
+  Use the `count` parameter or repeat the action the exact number of times requested until the directive is completely fulfilled.
+- If Sir commands multiple tasks consecutively over time, complete each one autonomously and remain ready for the next.
+
 Each turn you receive the goal, the actions taken so far, and the CURRENT screen as a numbered list of UI elements (sometimes with a screenshot). Call exactly ONE tool per turn.
 
 Rules:
@@ -559,7 +635,11 @@ Rules:
                 fn(
                     "click",
                     "Click the element with this index.",
-                    listOf(p("index", "INTEGER", "Element index from the list"))
+                    listOf(
+                        p("index", "INTEGER", "Element index from the list"),
+                        p("count", "INTEGER", "Number of times to click (default 1)")
+                    ),
+                    required = listOf("index")
                 )
             )
 
@@ -587,7 +667,11 @@ Rules:
                 fn(
                     "scroll",
                     "Scroll the screen.",
-                    listOf(p("direction", "STRING", "down, up, left or right"))
+                    listOf(
+                        p("direction", "STRING", "down, up, left or right"),
+                        p("count", "INTEGER", "Number of times to scroll (e.g. 1, 2, 3... default 1)")
+                    ),
+                    required = listOf("direction")
                 )
             )
 
@@ -595,7 +679,11 @@ Rules:
                 fn(
                     "press_key",
                     "Press a system key.",
-                    listOf(p("key", "STRING", "back, home, recents, notifications or enter"))
+                    listOf(
+                        p("key", "STRING", "back, home, recents, notifications or enter"),
+                        p("count", "INTEGER", "Number of times to press (default 1)")
+                    ),
+                    required = listOf("key")
                 )
             )
 

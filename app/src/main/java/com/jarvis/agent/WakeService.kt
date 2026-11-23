@@ -212,6 +212,8 @@ class WakeService : Service() {
         RegexOption.IGNORE_CASE
     )
 
+    private var nextWakeRunnable: Runnable? = null
+
     private fun initWake() {
         if (
             checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
@@ -223,32 +225,34 @@ class WakeService : Service() {
 
         stopAllWakeDetectors()
 
-        // 1. Initialize OpenWakeWord with sensitive threshold
-        try {
-            val rawThreshold = Prefs.get(this, Prefs.WAKE_THRESHOLD, "0.05")
-                .toFloatOrNull() ?: 0.05f
-            val threshold = rawThreshold.coerceIn(0.01f, 0.40f)
+        // Use Native Android Speech Wake Spotter as primary engine (no AudioRecord conflict, handles Indian English)
+        if (SpeechRecognizer.isRecognitionAvailable(this)) {
+            startNativeSpeechWake()
+        } else {
+            // Fallback to openWakeWord if device has no speech recognition service
+            try {
+                val rawThreshold = Prefs.get(this, Prefs.WAKE_THRESHOLD, "0.05")
+                    .toFloatOrNull() ?: 0.05f
+                val threshold = rawThreshold.coerceIn(0.01f, 0.40f)
 
-            wakeWord = OpenWakeWord.Builder(this)
-                .setModel(OpenWakeWord.BuiltInModel.HEY_JARVIS)
-                .setThreshold(threshold)
-                .build()
+                wakeWord = OpenWakeWord.Builder(this)
+                    .setModel(OpenWakeWord.BuiltInModel.HEY_JARVIS)
+                    .setThreshold(threshold)
+                    .build()
 
-            wakeWord?.start { score ->
-                Log.d("WakeService", "OpenWakeWord triggered: $score (threshold: $threshold)")
-                mainHandler.post {
-                    if (!busy && running) {
-                        stopAllWakeDetectors()
-                        startSession(null)
+                wakeWord?.start { score ->
+                    Log.d("WakeService", "OpenWakeWord triggered: $score (threshold: $threshold)")
+                    mainHandler.post {
+                        if (!busy && running) {
+                            stopAllWakeDetectors()
+                            startSession(null)
+                        }
                     }
                 }
+            } catch (e: Exception) {
+                Log.w("WakeService", "OpenWakeWord fallback init warning: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.w("WakeService", "OpenWakeWord init warning: ${e.message}")
         }
-
-        // 2. Start Native Android Speech Wake Spotter (understands all Indian English pronunciations)
-        startNativeSpeechWake()
 
         currentState = AgentState.STANDBY
         setNotif("Listening for \"Hey Jarvis\"")
@@ -314,7 +318,13 @@ class WakeService : Service() {
                             }
                             handleWakeCheck(bundle, isFinal = true)
                         } else {
-                            scheduleNextWakeListen(300)
+                            // Back off slightly on audio or busy errors to let Android audio subsystem settle cleanly
+                            val delay = when (error) {
+                                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> 600L
+                                SpeechRecognizer.ERROR_AUDIO -> 500L
+                                else -> 250L
+                            }
+                            scheduleNextWakeListen(delay)
                         }
                     }
 
@@ -368,17 +378,23 @@ class WakeService : Service() {
     }
 
     private fun scheduleNextWakeListen(delayMs: Long) {
+        nextWakeRunnable?.let { mainHandler.removeCallbacks(it) }
         if (!busy && running) {
-            mainHandler.postDelayed({
+            val r = Runnable {
                 if (!busy && running) {
                     startNativeSpeechWake()
                 }
-            }, delayMs)
+            }
+            nextWakeRunnable = r
+            mainHandler.postDelayed(r, delayMs)
         }
     }
 
     private fun stopSpeechWakeOnly() {
+        nextWakeRunnable?.let { mainHandler.removeCallbacks(it) }
+        nextWakeRunnable = null
         try {
+            speechWakeRecognizer?.cancel()
             speechWakeRecognizer?.destroy()
         } catch (e: Exception) {
             Log.w("WakeService", "Stop speech wake error", e)
@@ -456,7 +472,7 @@ class WakeService : Service() {
                     hideOverlay()
                     busy = false
                     currentState = AgentState.STANDBY
-                    delay(200)
+                    delay(500) // Allow Android audio subsystem to cleanly release focus and hardware handles
                     resumeWake()
                 }
             }
@@ -507,9 +523,12 @@ class WakeService : Service() {
         val enrolledVp = VoiceprintEngine.deserialize(enrolledStr)
         val threshold = Prefs.get(this@WakeService, Prefs.VOICE_THRESHOLD, "0.74").toFloatOrNull() ?: 0.74f
 
-        val recorder = VoiceRecorder()
-        // Record audio in parallel for biometric voiceprint analysis
-        recorder.start()
+        // Only start biometric VoiceRecorder if Voice Lock is active to avoid mic contention
+        val recorder = if (isLockEnabled && enrolledVp != null) {
+            VoiceRecorder().apply { start() }
+        } else {
+            null
+        }
         val backupAudioStream = java.io.ByteArrayOutputStream()
 
         val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
@@ -658,7 +677,7 @@ class WakeService : Service() {
         }
 
         // Stop parallel recorder and evaluate voiceprint
-        val recordedAudio = recorder.stop()
+        val recordedAudio = recorder?.stop() ?: ByteArray(0)
         val audioBytes = if (recordedAudio.isNotEmpty()) recordedAudio else backupAudioStream.toByteArray()
 
         if (speechText.isNullOrBlank()) {
