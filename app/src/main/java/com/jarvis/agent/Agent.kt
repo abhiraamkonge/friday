@@ -369,13 +369,18 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
                 .removePrefix("the ")
                 .trim()
 
-            // Let Gemini handle multi-step commands.
-            val isCompound = Regex("\\b(and|then|after that|before that)\\b")
-                .containsMatchIn(appName)
+            // If the command contains action verbs or intent beyond simply launching the app,
+            // let Gemini handle the multi-step workflow.
+            val isMultiStep = Regex("\\b(and|then|after that|before that|to|for|send|text|message|chat|search|play|call|write|type|read|check)\\b")
+                .containsMatchIn(appName) || appName.split("\\s+".toRegex()).size > 2
 
-            if (!isCompound) {
-                io.speak(openApp(appName))
-                return true
+            if (!isMultiStep) {
+                val launchResult = openApp(appName)
+                if (launchResult.startsWith("Launched") || launchResult.startsWith("Opened")) {
+                    io.speak(launchResult)
+                    return true
+                }
+                // If app was not found or couldn't launch, fall through to Gemini!
             }
         }
 
@@ -395,15 +400,20 @@ class Agent(private val ctx: Context, private val io: AgentIO) {
             }
 
         val q = name.lowercase().trim()
+            .removePrefix("the ")
+            .removeSuffix(" app")
+            .removeSuffix(" application")
+            .trim()
 
         val match = apps.firstOrNull {
-    it.first.lowercase() == q
-} ?: apps.firstOrNull {
-    it.first.lowercase().contains(q)
-}
+            it.first.lowercase() == q
+        } ?: apps.firstOrNull {
+            it.first.lowercase().contains(q)
+        } ?: apps.firstOrNull {
+            q.contains(it.first.lowercase()) && it.first.length >= 3
+        }
         if (match == null) {
-            return "No app named '$name'. Installed apps: " +
-                apps.map { it.first }.sorted().take(60).joinToString()
+            return "No app named '$name'."
         }
 
         val li = pm.getLaunchIntentForPackage(match.second)
@@ -463,6 +473,22 @@ Persona and Speech:
 - Always address the user respectfully as 'Sir' (e.g., 'Right away, Sir', 'Certainly Sir, playing that on YouTube for you now', 'I have completed the task for you, Sir', 'Done Sir').
 - Sound like a real, decisive, highly capable human personal assistant. Keep responses concise, warm, natural, and clear.
 
+Directives & Command Disambiguation:
+- Spoken commands may be colloquial, continuous, or compound (e.g. "open whatsapp and text rahul hello", "open whatsapp to message dad", "search youtube for believer", "turn on flashlight", "call doctor").
+- Never get confused by spoken directives. Always deconstruct the user's goal into the correct sequence of phone actions:
+  * For Messaging (WhatsApp, SMS, Telegram):
+    1. If the app is not already in the foreground, call `open_app("WhatsApp")`.
+    2. If the recipient or contact is visible on screen, click it. If not, click the Search icon/field, type the contact's name with `type_text`, and click the contact from the results list.
+    3. Once inside the chat thread, find the message input field (labeled "Message", "Type a message", or EditText), click or `type_text` the message body.
+    4. Click the Send button immediately.
+    5. After the message is sent, call `done` with a polite confirmation to Sir (e.g., "I have sent the message to Rahul for you, Sir.").
+  * For Media & Videos (YouTube, Spotify):
+    1. If not open, call `open_app("YouTube")`.
+    2. Search for the title and immediately click to play the first result.
+    3. Call `done` confirming playback to Sir.
+  * For System Actions (Calls, Settings, Flashlight):
+    Execute the required clicks or tools directly to complete the request without pausing.
+
 Each turn you receive the goal, the actions taken so far, and the CURRENT screen as a numbered list of UI elements (sometimes with a screenshot). Call exactly ONE tool per turn.
 
 Rules:
@@ -472,12 +498,6 @@ Rules:
 - To find something off-screen, use scroll. "down" reveals content further down.
 - If the goal needs no phone interaction (a general question, factual query), call done immediately with the answer.
 - When opening YouTube or searching media, click the first video or search result to start playing it immediately without asking.
-- Multi-step messaging (e.g. WhatsApp, Messages):
-  1. If the app is not open, call open_app.
-  2. If the chat/contact is visible, click it. If not, click Search, type the contact's name, then click the contact from the results.
-  3. Click the message text input field or use type_text to input the text.
-  4. Click the Send button immediately to send the message.
-  5. Once sent, call done with a short polite confirmation to Sir.
 - If an action had no visible effect, try a different approach instead of repeating it.
 - When the task is completely finished, call done with a short, natural human spoken message (1-2 sentences) in natural Indian English, addressing the user respectfully as Sir: {LANG}."""
 

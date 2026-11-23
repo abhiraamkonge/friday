@@ -274,19 +274,48 @@ class WakeService : Service() {
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
                 }
 
+                var wakePhraseHeard = false
+                var lastWakeSpeech: String? = null
+
                 rec.setRecognitionListener(object : RecognitionListener {
                     override fun onPartialResults(partialResults: Bundle?) {
-                        handleWakeCheck(partialResults)
+                        val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return
+                        for (text in matches) {
+                            val lower = text.lowercase().trim()
+                            lastWakeSpeech = lower
+                            val match = wakeRegex.find(lower)
+                            if (match != null) {
+                                wakePhraseHeard = true
+                                show("🎙 Jarvis listening…")
+                                break
+                            }
+                        }
                     }
 
                     override fun onResults(results: Bundle?) {
-                        if (!handleWakeCheck(results)) {
-                            scheduleNextWakeListen(200)
+                        val handled = handleWakeCheck(results, isFinal = true)
+                        if (!handled) {
+                            if (wakePhraseHeard && !lastWakeSpeech.isNullOrBlank()) {
+                                val bundle = Bundle().apply {
+                                    putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, arrayListOf(lastWakeSpeech))
+                                }
+                                handleWakeCheck(bundle, isFinal = true)
+                            } else {
+                                scheduleNextWakeListen(200)
+                            }
                         }
                     }
 
                     override fun onError(error: Int) {
-                        scheduleNextWakeListen(300)
+                        if (wakePhraseHeard && !busy && running) {
+                            Log.i("WakeService", "Wake phrase was heard before speech error $error; starting session")
+                            val bundle = Bundle().apply {
+                                putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, arrayListOf(lastWakeSpeech ?: "hey jarvis"))
+                            }
+                            handleWakeCheck(bundle, isFinal = true)
+                        } else {
+                            scheduleNextWakeListen(300)
+                        }
                     }
 
                     override fun onReadyForSpeech(params: Bundle?) {}
@@ -307,7 +336,7 @@ class WakeService : Service() {
         }
     }
 
-    private fun handleWakeCheck(bundle: Bundle?): Boolean {
+    private fun handleWakeCheck(bundle: Bundle?, isFinal: Boolean): Boolean {
         if (busy || !running) return false
         val matches = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return false
 
@@ -315,16 +344,19 @@ class WakeService : Service() {
             val lower = text.lowercase().trim()
             val match = wakeRegex.find(lower)
             if (match != null) {
-                Log.i("WakeService", "Wake phrase detected: '$text'")
+                Log.i("WakeService", "Wake phrase detected (isFinal=$isFinal): '$text'")
                 stopAllWakeDetectors()
 
                 val spokenAfterWake = lower.substring(match.range.last + 1).trim()
                 val isVoiceLockEnabled = Prefs.get(this@WakeService, Prefs.VOICE_LOCK_ENABLED, "false").toBoolean()
+
                 mainHandler.post {
                     if (!busy && running) {
-                        if (!isVoiceLockEnabled && spokenAfterWake.length >= 3) {
+                        // Only pass spokenAfterWake if it is from FINAL recognition and is a full sentence
+                        if (isFinal && !isVoiceLockEnabled && spokenAfterWake.length >= 8 && spokenAfterWake.contains(" ")) {
                             startSession(spokenAfterWake)
                         } else {
+                            // Listen completely to full command with active listening session & beep
                             startSession(null)
                         }
                     }
@@ -501,6 +533,7 @@ class WakeService : Service() {
                 )
 
                 val finished = AtomicBoolean(false)
+                var latestPartialSpeech: String? = null
 
                 fun finish(text: String?) {
                     if (finished.compareAndSet(false, true)) {
@@ -520,13 +553,20 @@ class WakeService : Service() {
                             val matches = results?.getStringArrayList(
                                 SpeechRecognizer.RESULTS_RECOGNITION
                             )
-                            Log.d("WakeService", "Speech results: $matches")
-                            finish(matches?.firstOrNull())
+                            val finalSpeech = matches?.firstOrNull()?.takeIf { it.isNotBlank() } ?: latestPartialSpeech
+                            Log.d("WakeService", "Speech results: finalSpeech='$finalSpeech' (matches=$matches, partial='$latestPartialSpeech')")
+                            finish(finalSpeech)
                         }
 
                         override fun onError(error: Int) {
                             Log.w("WakeService", "Speech recognition error: ${speechErrorName(error)}")
-                            finish(null)
+                            // If we already received speech in partial results, use it instead of dropping!
+                            if (!latestPartialSpeech.isNullOrBlank()) {
+                                Log.i("WakeService", "Recovered speech from partial results: '$latestPartialSpeech'")
+                                finish(latestPartialSpeech)
+                            } else {
+                                finish(null)
+                            }
                         }
 
                         override fun onReadyForSpeech(params: Bundle?) {
@@ -548,7 +588,7 @@ class WakeService : Service() {
                         }
 
                         override fun onEndOfSpeech() {
-                            show("⏳ Processing speech…")
+                            show("⏳ Processing directive…")
                         }
 
                         override fun onPartialResults(partialResults: Bundle?) {
@@ -556,6 +596,7 @@ class WakeService : Service() {
                                 ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                                 ?.firstOrNull()
                             if (!partial.isNullOrBlank()) {
+                                latestPartialSpeech = partial
                                 show("🎙 $partial")
                             }
                         }
@@ -592,19 +633,19 @@ class WakeService : Service() {
                     )
                     .putExtra(
                         RecognizerIntent.EXTRA_MAX_RESULTS,
-                        3
+                        5
                     )
                     .putExtra(
                         RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
-                        2500L
+                        3500L
                     )
                     .putExtra(
                         RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
-                        1800L
+                        2200L
                     )
                     .putExtra(
                         RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS,
-                        1500L
+                        2000L
                     )
 
                 try {
